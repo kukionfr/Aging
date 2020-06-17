@@ -9,7 +9,7 @@ def read_and_label(file_path):
     img = tf.io.read_file(file_path)
     img = tf.image.decode_jpeg(img, channels=3)
     img = tf.image.convert_image_dtype(img, tf.float32)
-    img = tf.image.resize(img, [100, 100])
+    img = tf.image.resize(img, [96, 96])
     # img = occlude(img, file_path)
     return img, label
 
@@ -75,7 +75,10 @@ testdir = '/home/kuki/Desktop/Synology/aging/data/cnn_dataset/test'
 
 model_dir = 'cnn'
 ms = ['Res50V2','IncV3', 'InceptionResNetV2']
+ms = ['MobileNetV2']
 ts = ['t'+str(_) for _ in range(1,16)]
+ts = ts + ['t'+str(_)+'_aug7' for _ in range(1,6)]
+ts = ts + ['t'+str(_)+'_aug10' for _ in range(1,6)]
 
 csvname = 't1_t15.csv'
 if os.path.exists(csvname):

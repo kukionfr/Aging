@@ -1,22 +1,38 @@
 import tensorflow as tf
-from tensorflow.keras.layers import Dense
+# from tensorflow.keras.layers import Dense
+import tensorflow_hub as hub
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
 import pathlib
 
+# gpus = tf.config.experimental.list_physical_devices('GPU')
+# if gpus:
+#   try:
+#     # Currently, memory growth needs to be the same across GPUs
+#     for gpu in gpus:
+#       tf.config.experimental.set_memory_growth(gpu, True)
+#     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+#     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+#   except RuntimeError as e:
+#     # Memory growth must be set before GPUs have been initialized
+#     print(e)
+
+# solution #2
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
+  # Restrict TensorFlow to only allocate 1GB of memory on the first GPU
   try:
-    # Currently, memory growth needs to be the same across GPUs
-    for gpu in gpus:
-      tf.config.experimental.set_memory_growth(gpu, True)
+    tf.config.experimental.set_virtual_device_configuration(
+        gpus[0],
+        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=9000)])
     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
   except RuntimeError as e:
-    # Memory growth must be set before GPUs have been initialized
+    # Virtual devices must be set before GPUs have been initialized
     print(e)
+
 
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 print("TensorFlow Version: ", tf.__version__)
@@ -24,11 +40,11 @@ print("Number of GPU available: ", len(tf.config.experimental.list_physical_devi
 
 IMG_HEIGHT = 100
 IMG_WIDTH = 100
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 val_fraction = 30
-max_epochs=200
-augment_degree = 0.10
-class_target_sizes = [1200, 1600] #old, young
+max_epochs= 300
+augment_degree = 0
+class_target_sizes = [300, 400] #old, young
 
 def read_and_label(file_path):
     label = get_label(file_path)
@@ -62,7 +78,8 @@ def balance(dataset_dir, class_target_sizes):
         sections = [_ for _ in dataset_dir.glob(CLASS+'/*')]
         for idx, section in enumerate(sections):
             section = os.path.join(section, 'image/*.jpg')
-            list_ds = tf.data.Dataset.list_files(section, shuffle=False)
+            # list_ds = tf.data.Dataset.list_files(section, shuffle=False)
+            list_ds = tf.data.Dataset.list_files(section)
             # downsample if too big,
             list_ds = (list_ds
                        .shuffle(len(list(list_ds)))
@@ -81,7 +98,7 @@ def balance(dataset_dir, class_target_sizes):
                 # original + augmented image
                 labeled_ds = labeled_ds.concatenate(labeled_ds_aug)
                 sampleN = len(list(labeled_ds))
-            labeled_ds.shuffle(buffer)
+            # labeled_ds.shuffle(buffer)
             print(CLASS, ' sample size balanced to ', sampleN)
             # append
             if balanced_ds[0] == 0:
@@ -89,10 +106,12 @@ def balance(dataset_dir, class_target_sizes):
             else:
                 labeled_ds = balanced_ds[0].concatenate(labeled_ds)
                 balanced_ds[0] = labeled_ds
-    return balanced_ds[0]
+    return balanced_ds[0].shuffle(buffer)
 
 def augment(image, label):
     degree = augment_degree
+    if degree == 0:
+        return image, label
     image = tf.image.random_hue(image, max_delta=degree, seed=5)
     image = tf.image.random_contrast(image, 1-degree, 1+degree, seed=5)  # tissue quality
     image = tf.image.random_saturation(image, 1-degree, 1+degree, seed=5)  # stain quality
@@ -102,17 +121,13 @@ def augment(image, label):
     return image, label
 
 # list location of all training images
-train_data_dir = r'\\kukibox\research\aging\data\cnn_dataset\train'
+train_data_dir = '/home/kuki/Desktop/Synology/aging/data/cnn_dataset/train'
 train_data_dir = pathlib.Path(train_data_dir)
 CLASS_NAMES = np.array([item.name for item in train_data_dir.glob('*') if item.name != ".DS_store"])
 CLASS_NAMES = sorted(CLASS_NAMES, key=str.lower) #sort alphabetically case-insensitive
-class_target_sizes = [600, 800] #old, young
-
 
 
 train_labeled_ds = balance(train_data_dir, class_target_sizes)
-
-
 train_image_count = len(list(train_labeled_ds))
 print('training set size : ', train_image_count)
 val_image_count = train_image_count // 100 * val_fraction
@@ -137,7 +152,7 @@ plt.show()
 train_ds = (train_labeled_ds
             .skip(val_image_count)
             # .shuffle(buffer_size=len(list(train_labeled_ds)))
-            # .shuffle(buffer_size=1000)
+            .shuffle(buffer_size=100000)
             .repeat()
             .batch(BATCH_SIZE)
             .prefetch(buffer_size=AUTOTUNE)
@@ -147,12 +162,13 @@ val_ds = (train_labeled_ds
           .take(val_image_count)
           .repeat()
           .batch(BATCH_SIZE)
-          .prefetch(buffer_size=AUTOTUNE))
+          .prefetch(buffer_size=AUTOTUNE)
+          )
 
 print('training set size : ', len(list(train_labeled_ds))-val_image_count)
 print('validation set size : ', val_image_count)
 
-test_data_dir = r'\\kukibox\research\aging\data\cnn_dataset\test'
+test_data_dir = '/home/kuki/Desktop/Synology/aging/data/cnn_dataset/test'
 test_data_dir = pathlib.Path(test_data_dir)
 test_labeled_ds = balance(test_data_dir, class_target_sizes)
 
@@ -289,60 +305,69 @@ test_ds_96 = test_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
 #     ])
 #     evaluateit(DenseNet121,'DenseNet121',trial,train_ds,val_ds,test_ds)
 
-trials = ['t1','t2','t3','t4','t5']
-trials = [ _+'_aug10' for _ in trials]
+ResV2_hub = tf.keras.Sequential([
+    hub.KerasLayer("https://tfhub.dev/google/imagenet/resnet_v2_101/feature_vector/4",
+                   trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
+    tf.keras.layers.Dense(2, activation='softmax')
+])
+ResV2_hub.build([None, 100, 100, 3])
+evaluateit(ResV2_hub,'ResV2_hub','t1',train_ds,val_ds,test_ds)
 
-for trial in trials:
-    # shape 96, 128, 160, 192, 224
-    MobileNetV2_base = tf.keras.applications.MobileNetV2(input_shape=(96, 96, 3),
-                                                    pooling='avg',
-                                                    include_top=False,
-                                                    weights='imagenet'
-                                                    )
-    MobileNetV2 = tf.keras.Sequential([
-        MobileNetV2_base,
-            Dense(2, activation='softmax')
-        ])
-    evaluateit(MobileNetV2,'MobileNetV2',trial,train_ds_96,val_ds_96,test_ds_96)
-
-for trial in trials:
-    # min input 32x32
-    ResV2_base = tf.keras.applications.ResNet50V2(input_shape=(100, 100, 3),
-                                                pooling='avg',
-                                                include_top=False,
-                                                weights='imagenet'
-                                                )
-    ResV2 = tf.keras.Sequential([
-        ResV2_base,
-        Dense(2, activation='softmax')
-    ])
-    evaluateit(ResV2,'Res50V2',trial,train_ds,val_ds,test_ds)
-
-
-for trial in trials:
-    #min input size 75x75
-    IncV3_base = tf.keras.applications.InceptionV3(input_shape=(100, 100, 3),
-                                                pooling=None,
-                                                include_top=False,
-                                                weights='imagenet'
-                                                )
-    IncV3 = tf.keras.Sequential([
-        IncV3_base,
-        Dense(2, activation='softmax')
-    ])
-    evaluateit(IncV3,'IncV3',trial,train_ds,val_ds,test_ds)
-
-
-for trial in trials:
-    #min input size 75x75
-    InceptionResNetV2_base = tf.keras.applications.InceptionResNetV2(input_shape=(100, 100, 3),
-                                                pooling=None,
-                                                include_top=False,
-                                                weights='imagenet'
-                                                )
-    InceptionResNetV2 = tf.keras.Sequential([
-        InceptionResNetV2_base,
-        Dense(2, activation='softmax')
-    ])
-    evaluateit(InceptionResNetV2,'InceptionResNetV2',trial,train_ds,val_ds,test_ds)
+#
+# trials = ['t1','t2','t3','t4','t5']
+# trials = [ _+'_aug7' for _ in trials]
+#
+# for trial in trials:
+#     # shape 96, 128, 160, 192, 224
+#     MobileNetV2_base = tf.keras.applications.MobileNetV2(input_shape=(96, 96, 3),
+#                                                     pooling='avg',
+#                                                     include_top=False,
+#                                                     weights='imagenet'
+#                                                     )
+#     MobileNetV2 = tf.keras.Sequential([
+#         MobileNetV2_base,
+#             Dense(2, activation='softmax')
+#         ])
+#     evaluateit(MobileNetV2,'MobileNetV2',trial,train_ds_96,val_ds_96,test_ds_96)
+#
+# for trial in trials:
+#     # min input 32x32
+#     ResV2_base = tf.keras.applications.ResNet50V2(input_shape=(100, 100, 3),
+#                                                 pooling='avg',
+#                                                 include_top=False,
+#                                                 weights='imagenet'
+#                                                 )
+#     ResV2 = tf.keras.Sequential([
+#         ResV2_base,
+#         Dense(2, activation='softmax')
+#     ])
+#     evaluateit(ResV2,'Res50V2',trial,train_ds,val_ds,test_ds)
+#
+#
+# for trial in trials:
+#     #min input size 75x75
+#     IncV3_base = tf.keras.applications.InceptionV3(input_shape=(100, 100, 3),
+#                                                 pooling=None,
+#                                                 include_top=False,
+#                                                 weights='imagenet'
+#                                                 )
+#     IncV3 = tf.keras.Sequential([
+#         IncV3_base,
+#         Dense(2, activation='softmax')
+#     ])
+#     evaluateit(IncV3,'IncV3',trial,train_ds,val_ds,test_ds)
+#
+#
+# for trial in trials:
+#     #min input size 75x75
+#     InceptionResNetV2_base = tf.keras.applications.InceptionResNetV2(input_shape=(100, 100, 3),
+#                                                 pooling=None,
+#                                                 include_top=False,
+#                                                 weights='imagenet'
+#                                                 )
+#     InceptionResNetV2 = tf.keras.Sequential([
+#         InceptionResNetV2_base,
+#         Dense(2, activation='softmax')
+#     ])
+#     evaluateit(InceptionResNetV2,'InceptionResNetV2',trial,train_ds,val_ds,test_ds)
 
