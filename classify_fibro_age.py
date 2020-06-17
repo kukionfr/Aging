@@ -102,7 +102,7 @@ def augment(image, label):
     return image, label
 
 # list location of all training images
-train_data_dir = '/home/kuki2070s2/Desktop/Synology/aging/data/cnn_dataset/train'
+train_data_dir = r'\\kukibox\research\aging\data\cnn_dataset\train'
 train_data_dir = pathlib.Path(train_data_dir)
 CLASS_NAMES = np.array([item.name for item in train_data_dir.glob('*') if item.name != ".DS_store"])
 CLASS_NAMES = sorted(CLASS_NAMES, key=str.lower) #sort alphabetically case-insensitive
@@ -152,7 +152,7 @@ val_ds = (train_labeled_ds
 print('training set size : ', len(list(train_labeled_ds))-val_image_count)
 print('validation set size : ', val_image_count)
 
-test_data_dir = '/home/kuki2070s2/Desktop/Synology/aging/data/cnn_dataset/test'
+test_data_dir = r'\\kukibox\research\aging\data\cnn_dataset\test'
 test_data_dir = pathlib.Path(test_data_dir)
 test_labeled_ds = balance(test_data_dir, class_target_sizes)
 
