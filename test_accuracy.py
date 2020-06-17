@@ -60,7 +60,7 @@ if gpus:
   try:
     tf.config.experimental.set_virtual_device_configuration(
         gpus[0],
-        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=2048)])
+        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=9000)])
     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
   except RuntimeError as e:
@@ -68,16 +68,22 @@ if gpus:
     print(e)
 
 AUTOTUNE = tf.data.experimental.AUTOTUNE
-train_data_dir = r'\\kukibox\research\aging\data\cnn_dataset\train'
+train_data_dir = '/home/kuki/Desktop/Synology/aging/data/cnn_dataset/train'
 train_data_dir = pathlib.Path(train_data_dir)
 CLASS_NAMES = np.array([item.name for item in train_data_dir.glob('*') if item.name != ".DS_store"])
-testdir = r'\\kukibox\research\aging\data\cnn_dataset\test'
+testdir = '/home/kuki/Desktop/Synology/aging/data/cnn_dataset/test'
 
-model_dir = r'\\kukibox\research\aging\data\cnn_models\June16\2070s'
-ms = ['Res50V2', 'Res101V2', 'IncV3', 'InceptionResNetV2', 'MobileNetV2']
-ts = ['t1_cell', 't2_cell','t3_cell','t4_cell','t5_cell']
+model_dir = 'cnn'
+ms = ['Res50V2','IncV3', 'InceptionResNetV2']
+ts = ['t'+str(_) for _ in range(1,16)]
 
-df = pd.DataFrame([],columns=[1,3,7,10,16,19,23,25,29,31,37,41,45,49,62,68,70,76,78,82,88])
+csvname = 't1_t15.csv'
+if os.path.exists(csvname):
+    print('reading :', csvname)
+    df = pd.read_csv(csvname,header=0,index_col=0)
+else:
+    print('empty')
+    df = pd.DataFrame([],columns=[1,3,7,10,16,19,23,25,29,31,37,41,45,49,62,68,70,76,78,82,88])
 for mm in ms:
     for t in ts:
         aa = []
@@ -109,5 +115,6 @@ for mm in ms:
         evalmodels(os.path.join(testdir,'old/sec082'),m)
         evalmodels(os.path.join(testdir,'old/sec088'),m)
         df.loc[os.path.join(mm,t)]=aa
-    df.to_csv('test.csv')
+    df.to_csv(csvname)
+    print('saved')
 print(df)
