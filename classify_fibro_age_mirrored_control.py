@@ -204,7 +204,7 @@ print('test step # ', TEST_STEPS)
 def get_callbacks(name):
     return [
         modeling.EpochDots(),
-        tf.keras.callbacks.EarlyStopping(monitor='val_sparse_categorical_crossentropy',
+        tf.keras.callbacks.EarlyStopping(monitor='val_accuracy',
                                          patience=50, restore_best_weights=True),
         # tf.keras.callbacks.TensorBoard(log_dir/name, histogram_freq=1),
         # tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_dir + "/{}/cp.ckpt".format(name),
@@ -212,8 +212,8 @@ def get_callbacks(name):
         #                                    monitor='val_sparse_categorical_crossentropy',
         #                                    save_weights_only=True,
         #                                    save_best_only=True),
-        tf.keras.callbacks.ReduceLROnPlateau(monitor='val_sparse_categorical_crossentropy',
-                                             factor=0.1, patience=10, verbose=0, mode='auto',
+        tf.keras.callbacks.ReduceLROnPlateau(monitor='val_accuracy',
+                                             factor=0.1, patience=20, verbose=0, mode='auto',
                                              min_delta=0.0001, cooldown=0, min_lr=0),
     ]
 
@@ -228,7 +228,7 @@ def get_callbacks(name):
 def compilefit(model, name, max_epochs, train_ds, val_ds):
     model.compile(optimizer=tf.keras.optimizers.Adam(),
                   loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-                  metrics=[tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True), 'accuracy'])
+                  metrics=['accuracy'])
     model_history = model.fit(train_ds,
                               steps_per_epoch=STEPS_PER_EPOCH,
                               epochs=max_epochs,
@@ -251,36 +251,22 @@ def compilefit(model, name, max_epochs, train_ds, val_ds):
 
     return model_history
 
-def plotdf(dfobj, condition, repeat='',lr=None):
+def plotdf(dfobj, condition, repeat, lr=None):
     # pd.DataFrame(dfobj).plot(title=condition+repeat)
+    dfobj1 = dfobj.copy()
+    dfobj.pop('lr')
     dfobj.pop('loss')
     dfobj.pop('val_loss')
-    dfobj1 = dfobj.copy()
-    dfobj2 = dfobj.copy()
-    dfobj.pop('lr')
-    dfobj.pop('sparse_categorical_crossentropy')
-    dfobj.pop('val_sparse_categorical_crossentropy')
-    pd.DataFrame(dfobj).plot(title=condition+repeat)
-    plt.savefig('cnn/' + condition + '/' + repeat + '_accuracy.png')
+    pd.DataFrame(dfobj).plot(title=condition+'_'+repeat)
+    plt.savefig('cnn/'+condition+'/'+repeat+'t1_accuracy.png')
     dfobj1.pop('lr')
     dfobj1.pop('accuracy')
     dfobj1.pop('val_accuracy')
-    pd.DataFrame(dfobj1).plot(title=condition+repeat)
-    plt.savefig('cnn/' + condition + '/' + repeat + '_loss.png')
-    if lr is not 'decay':
-        dfobj2.pop('sparse_categorical_crossentropy')
-        dfobj2.pop('val_sparse_categorical_crossentropy')
-        dfobj2.pop('accuracy')
-        dfobj2.pop('val_accuracy')
-        pd.DataFrame(dfobj2).plot(title=condition+repeat)
-        plt.savefig('cnn/' + condition + '/' + repeat + '_lr.png')
+    pd.DataFrame(dfobj1).plot(title=condition+'_'+repeat)
+    plt.savefig('cnn/'+condition+'/'+repeat+'t1_loss.png')
     plt.show()
 
-
 histories = {}
-
-
-
 
 def evaluateit(network,networkname,repeat, train_ds, val_ds, test_ds):
     histories[networkname] = compilefit(network, 'cnn/'+networkname+'/'+repeat, max_epochs, train_ds, val_ds)
@@ -294,12 +280,14 @@ mirrored_strategy = tf.distribute.MirroredStrategy()
 for trial in trials:
     start = time()
     with mirrored_strategy.scope():
+        print('downloading model')
         IncV3_hub = tf.keras.Sequential([
             hub.KerasLayer("https://tfhub.dev/google/imagenet/inception_v3/feature_vector/4",
                            trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
             tf.keras.layers.Dense(2, activation='softmax')
         ])
         IncV3_hub.build([None, 100, 100, 3])  # Batch input shape.
+        print('training...........')
         evaluateit(IncV3_hub,'IncV3_hub_t2',trial,train_ds,val_ds,test_ds)
     end = time()
     print('duration : ', end-start)
@@ -307,12 +295,14 @@ for trial in trials:
 for trial in trials:
     start = time()
     with mirrored_strategy.scope():
+        print('downloading model')
         ResV2_hub = tf.keras.Sequential([
             hub.KerasLayer("https://tfhub.dev/google/imagenet/resnet_v2_101/feature_vector/4",
                            trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
             tf.keras.layers.Dense(2, activation='softmax')
         ])
         ResV2_hub.build([None, 100, 100, 3])
+        print('training...........')
         evaluateit(ResV2_hub,'ResV2_hub_t2',trial,train_ds,val_ds,test_ds)
     end = time()
     print('duration : ', end-start)

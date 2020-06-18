@@ -11,7 +11,7 @@ def read_and_label(file_path):
     img = tf.io.read_file(file_path)
     img = tf.image.decode_jpeg(img, channels=3)
     img = tf.image.convert_image_dtype(img, tf.float32)
-    img = tf.image.resize(img, [96, 96])
+    img = tf.image.resize(img, [100, 100])
     # img = occlude(img, file_path)
     return img, label
 
@@ -20,8 +20,8 @@ def get_label(file_path):
     return tf.reshape(tf.where(parts[-4] == CLASS_NAMES), [])
 
 def load_compile(net):
-    # model = tf.keras.models.load_model(os.path.join(*[model_dir,net,'full_model.h5']),
-    model=tf.keras.models.load_model('/home/kuki/PycharmProjects/Tensorflow-Tutorial-Kyu/cnn/ResV2/full_model.h5',
+    model = tf.keras.models.load_model(os.path.join(*[model_dir,net,'full_model.h5']),
+    # model=tf.keras.models.load_model('/home/kuki/PycharmProjects/Tensorflow-Tutorial-Kyu/cnn/ResV2/full_model.h5',
                                     custom_objects={'KerasLayer': hub.KerasLayer},
                                     compile=False)
     model.compile(loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
@@ -73,16 +73,16 @@ if gpus:
     print(e)
 
 AUTOTUNE = tf.data.experimental.AUTOTUNE
-train_data_dir = '/home/kuki/Desktop/Synology/aging/data/cnn_dataset/train'
+train_data_dir = '/home/kuki2070s2/Desktop/Synology/aging/data/cnn_dataset/train'
 train_data_dir = pathlib.Path(train_data_dir)
 CLASS_NAMES = np.array([item.name for item in train_data_dir.glob('*') if item.name != ".DS_store"])
-testdir = '/home/kuki/Desktop/Synology/aging/data/cnn_dataset/test'
+testdir = '/home/kuki2070s2/Desktop/Synology/aging/data/cnn_dataset/test'
 
 model_dir = 'cnn'
 # ms = ['Res50V2','IncV3', 'InceptionResNetV2']
 # ms = ['MobileNetV2']
-ms = ['ResV2_hub']
-ts = ['t'+str(_) for _ in range(1,6)]
+ms = ['ResV2_hub_t2','IncV3_hub_t2']
+ts = ['t'+str(_)+'_300400_aug5' for _ in range(1,2)]
 # ts = ts + ['t'+str(_)+'_aug7' for _ in range(1,6)]
 # ts = ts + ['t'+str(_)+'_aug10' for _ in range(1,6)]
 
@@ -93,6 +93,7 @@ if os.path.exists(csvname):
 else:
     print('empty')
     df = pd.DataFrame([],columns=[1,3,7,10,16,19,23,25,29,31,37,41,45,49,62,68,70,76,78,82,88])
+duration =[]
 for mm in ms:
     for t in ts:
         start=time()
@@ -125,10 +126,10 @@ for mm in ms:
         evalmodels(os.path.join(testdir,'old/sec082'),m)
         evalmodels(os.path.join(testdir,'old/sec088'),m)
         end = time()
-        print('duration: ',start-end)
-        print(aa)
-        df.loc[os.path.join(mm,t,'shuffle'
-                                 '')]=aa
+        print('duration: ',end-start)
+        duration.append(end-start)
+        df.loc[os.path.join(mm,t)]=aa
     df.to_csv(csvname)
     print('saved')
 print(df)
+print('duration : ', duration)
