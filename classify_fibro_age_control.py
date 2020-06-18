@@ -292,7 +292,7 @@ trials = ['t'+str(_)+'_300400_aug5' for _ in range(1,2)]
 # trials = trials + ['t'+str(_) for _ in range(6,11)]
 
 for trial in trials:
-    start = time.time
+    start = time()
     IncV3_hub = tf.keras.Sequential([
         hub.KerasLayer("https://tfhub.dev/google/imagenet/inception_v3/feature_vector/4",
                        trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
@@ -300,11 +300,11 @@ for trial in trials:
     ])
     IncV3_hub.build([None, 100, 100, 3])  # Batch input shape.
     evaluateit(IncV3_hub,'IncV3_hub_t2',trial,train_ds,val_ds,test_ds)
-    end = time.time
+    end = time()
     print('duration : ', end-start)
 
 for trial in trials:
-    start = time.time
+    start = time()
     ResV2_hub = tf.keras.Sequential([
         hub.KerasLayer("https://tfhub.dev/google/imagenet/resnet_v2_101/feature_vector/4",
                        trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
@@ -312,6 +312,6 @@ for trial in trials:
     ])
     ResV2_hub.build([None, 100, 100, 3])
     evaluateit(ResV2_hub,'ResV2_hub_t2',trial,train_ds,val_ds,test_ds)
-    end = time.time
+    end = time()
     print('duration : ', end-start)
 
