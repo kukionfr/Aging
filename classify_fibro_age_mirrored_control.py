@@ -9,31 +9,31 @@ import os
 import pathlib
 from time import time
 # solution #1
-# gpus = tf.config.experimental.list_physical_devices('GPU')
-# if gpus:
-#   try:
-#     # Currently, memory growth needs to be the same across GPUs
-#     for gpu in gpus:
-#       tf.config.experimental.set_memory_growth(gpu, True)
-#     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-#     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-#   except RuntimeError as e:
-#     # Memory growth must be set before GPUs have been initialized
-#     print(e)
-
-# solution #2
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
-  # Restrict TensorFlow to only allocate 1GB of memory on the first GPU
   try:
-    tf.config.experimental.set_virtual_device_configuration(
-        gpus[0],
-        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=8000)])
+    # Currently, memory growth needs to be the same across GPUs
+    for gpu in gpus:
+      tf.config.experimental.set_memory_growth(gpu, True)
     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
   except RuntimeError as e:
-    # Virtual devices must be set before GPUs have been initialized
+    # Memory growth must be set before GPUs have been initialized
     print(e)
+
+# solution #2
+# gpus = tf.config.experimental.list_physical_devices('GPU')
+# if gpus:
+#   # Restrict TensorFlow to only allocate 1GB of memory on the first GPU
+#   try:
+#     tf.config.experimental.set_virtual_device_configuration(
+#         gpus[0],
+#         [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=8000)])
+#     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+#     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+#   except RuntimeError as e:
+#     # Virtual devices must be set before GPUs have been initialized
+#     print(e)
 
 tfds.disable_progress_bar()  # disable tqdm progress bar
 AUTOTUNE = tf.data.experimental.AUTOTUNE
@@ -290,28 +290,30 @@ def evaluateit(network,networkname,repeat, train_ds, val_ds, test_ds):
 
 trials = ['t'+str(_)+'_300400_aug5' for _ in range(1,2)]
 # trials = trials + ['t'+str(_) for _ in range(6,11)]
-
+mirrored_strategy = tf.distribute.MirroredStrategy()
 for trial in trials:
     start = time()
-    IncV3_hub = tf.keras.Sequential([
-        hub.KerasLayer("https://tfhub.dev/google/imagenet/inception_v3/feature_vector/4",
-                       trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
-        tf.keras.layers.Dense(2, activation='softmax')
-    ])
-    IncV3_hub.build([None, 100, 100, 3])  # Batch input shape.
-    evaluateit(IncV3_hub,'IncV3_hub_t2',trial,train_ds,val_ds,test_ds)
+    with mirrored_strategy.scope():
+        IncV3_hub = tf.keras.Sequential([
+            hub.KerasLayer("https://tfhub.dev/google/imagenet/inception_v3/feature_vector/4",
+                           trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
+            tf.keras.layers.Dense(2, activation='softmax')
+        ])
+        IncV3_hub.build([None, 100, 100, 3])  # Batch input shape.
+        evaluateit(IncV3_hub,'IncV3_hub_t2',trial,train_ds,val_ds,test_ds)
     end = time()
     print('duration : ', end-start)
 
 for trial in trials:
     start = time()
-    ResV2_hub = tf.keras.Sequential([
-        hub.KerasLayer("https://tfhub.dev/google/imagenet/resnet_v2_101/feature_vector/4",
-                       trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
-        tf.keras.layers.Dense(2, activation='softmax')
-    ])
-    ResV2_hub.build([None, 100, 100, 3])
-    evaluateit(ResV2_hub,'ResV2_hub_t2',trial,train_ds,val_ds,test_ds)
+    with mirrored_strategy.scope():
+        ResV2_hub = tf.keras.Sequential([
+            hub.KerasLayer("https://tfhub.dev/google/imagenet/resnet_v2_101/feature_vector/4",
+                           trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
+            tf.keras.layers.Dense(2, activation='softmax')
+        ])
+        ResV2_hub.build([None, 100, 100, 3])
+        evaluateit(ResV2_hub,'ResV2_hub_t2',trial,train_ds,val_ds,test_ds)
     end = time()
     print('duration : ', end-start)
 
