@@ -1,34 +1,40 @@
-
-
 import tensorflow as tf
 from tensorflow.keras.layers import Dense
+import tensorflow_hub as hub
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
 import pathlib
-import shutil
-from time import sleep
-from copy import deepcopy
-
-#%%
 
 #prevent pre-allocation of gpu memory.
 #cudnn failed to initialize without it
 #I hate tensorflow gpu support team
+# gpus = tf.config.experimental.list_physical_devices('GPU')
+# if gpus:
+#   try:
+#     # Currently, memory growth needs to be the same across GPUs
+#     for gpu in gpus:
+#       tf.config.experimental.set_memory_growth(gpu, True)
+#     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+#     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+#   except RuntimeError as e:
+#     # Memory growth must be set before GPUs have been initialized
+#     print(e)
+# solution #2
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
+  # Restrict TensorFlow to only allocate 1GB of memory on the first GPU
   try:
-    # Currently, memory growth needs to be the same across GPUs
-    for gpu in gpus:
-      tf.config.experimental.set_memory_growth(gpu, True)
+    tf.config.experimental.set_virtual_device_configuration(
+        gpus[0],
+        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=6000)]
+    )
     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
   except RuntimeError as e:
-    # Memory growth must be set before GPUs have been initialized
+    # Virtual devices must be set before GPUs have been initialized
     print(e)
-
-#%%
 
 # check tf is imported correctly
 AUTOTUNE = tf.data.experimental.AUTOTUNE
@@ -43,9 +49,10 @@ mirrored_strategy = tf.distribute.MirroredStrategy()
 
 IMG_HEIGHT = 100
 IMG_WIDTH = 100
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 val_fraction = 30
-max_epochs=300
+max_epochs= 300
+augment_degree = 0
 class_target_sizes = [300, 400] #old, young
 
 #%%
@@ -56,7 +63,7 @@ def read_and_label(file_path):
     img = tf.image.decode_jpeg(img, channels=3)
     img = tf.image.convert_image_dtype(img, tf.float32)
     img = tf.image.resize(img, [IMG_WIDTH, IMG_HEIGHT])
-    img = occlude(img, file_path)
+    # img = occlude(img, file_path)
     return img, label
 
 def get_label(file_path):
@@ -82,10 +89,11 @@ def balance(dataset_dir, class_target_sizes):
         sections = [_ for _ in dataset_dir.glob(CLASS+'/*')]
         for idx, section in enumerate(sections):
             section = os.path.join(section, 'image/*.jpg')
-            list_ds = tf.data.Dataset.list_files(section, shuffle=False)
+            list_ds = tf.data.Dataset.list_files(section)
+            # list_ds = tf.data.Dataset.list_files(section, shuffle=False)
             # downsample if too big,
             list_ds = (list_ds
-                       .shuffle(len(list(list_ds)))
+                       .shuffle(100000)
                        .take(n)
                        )
             labeled_ds = list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
@@ -101,7 +109,7 @@ def balance(dataset_dir, class_target_sizes):
                 # original + augmented image
                 labeled_ds = labeled_ds.concatenate(labeled_ds_aug)
                 sampleN = len(list(labeled_ds))
-            labeled_ds.shuffle(buffer)
+            # labeled_ds.shuffle(buffer)
             print(CLASS, ' sample size balanced to ', sampleN)
             # append
             if balanced_ds[0] == 0:
@@ -109,10 +117,12 @@ def balance(dataset_dir, class_target_sizes):
             else:
                 labeled_ds = balanced_ds[0].concatenate(labeled_ds)
                 balanced_ds[0] = labeled_ds
-    return balanced_ds[0]
+    return balanced_ds[0].shuffle(100000)
 
 def augment(image, label):
-    degree=0.05
+    degree = augment_degree
+    if degree == 0:
+        return image, label
     image = tf.image.random_hue(image, max_delta=degree, seed=5)
     image = tf.image.random_contrast(image, 1-degree, 1+degree, seed=5)  # tissue quality
     image = tf.image.random_saturation(image, 1-degree, 1+degree, seed=5)  # stain quality
@@ -123,8 +133,6 @@ def augment(image, label):
     # To rotate 100x100 image, you need to rotate 142x142 image and crop center 100x100
     return image, label
 
-#%%
-
 # list location of all training images
 train_data_dir = '/home/kuki2070s2/Desktop/Synology/aging/data/cnn_dataset/train'
 train_data_dir = pathlib.Path(train_data_dir)
@@ -132,17 +140,7 @@ CLASS_NAMES = np.array([item.name for item in train_data_dir.glob('*') if item.n
 CLASS_NAMES = sorted(CLASS_NAMES, key=str.lower) #sort alphabetically case-insensitive
 
 
-#%%
-
 train_labeled_ds = balance(train_data_dir, class_target_sizes)
-
-#%%
-
-# list_ds = tf.data.Dataset.list_files(str(train_data_dir/ '*/*/image/*'))
-# train_labeled_ds = list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
-
-#%%
-
 train_image_count = len(list(train_labeled_ds))
 print('training set size : ', train_image_count)
 val_image_count = train_image_count // 100 * val_fraction
@@ -154,8 +152,6 @@ VALIDATION_STEPS = val_image_count // BATCH_SIZE
 print('train step #',STEPS_PER_EPOCH)
 print('validation step #',VALIDATION_STEPS)
 
-#%%
-
 plt.figure(figsize=(10,10))
 for idx, elem in enumerate(train_labeled_ds.take(100)):
     img = elem[0]
@@ -166,17 +162,14 @@ for idx, elem in enumerate(train_labeled_ds.take(100)):
     plt.axis('off')
 plt.show()
 
-
 train_ds = (train_labeled_ds
             .skip(val_image_count)
             # .shuffle(buffer_size=len(list(train_labeled_ds)))
-            # .shuffle(buffer_size=1000)
+            .shuffle(buffer_size=100000)
             .repeat()
             .batch(BATCH_SIZE)
             .prefetch(buffer_size=AUTOTUNE)
             )
-
-#%%
 
 val_ds = (train_labeled_ds
           .take(val_image_count)
@@ -184,25 +177,13 @@ val_ds = (train_labeled_ds
           .batch(BATCH_SIZE)
           .prefetch(buffer_size=AUTOTUNE))
 
-#%%
-
 # below make run out of ram
 print('training set size : ', len(list(train_labeled_ds))-val_image_count)
 print('validation set size : ', val_image_count)
 
 test_data_dir = '/home/kuki2070s2/Desktop/Synology/aging/data/cnn_dataset/test'
 test_data_dir = pathlib.Path(test_data_dir)
-
-#%%
-
 test_labeled_ds = balance(test_data_dir, class_target_sizes)
-
-#%%
-
-# test_list_ds = tf.data.Dataset.list_files(str(test_data_dir / '*/*/image/*'))
-# test_labeled_ds = test_list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
-
-#%%
 
 plt.figure(figsize=(10,10))
 for idx,elem in enumerate(test_labeled_ds.take(100)):
@@ -214,8 +195,6 @@ for idx,elem in enumerate(test_labeled_ds.take(100)):
     plt.axis('off')
 plt.show()
 
-#%%
-
 test_ds = (test_labeled_ds
            # .shuffle(buffer_size=len(list(test_labeled_ds)))
            # .shuffle(buffer_size=1000)
@@ -224,14 +203,10 @@ test_ds = (test_labeled_ds
            .prefetch(buffer_size=AUTOTUNE)  # time it takes to produce next element
            )
 
-#%%
-
 test_image_count = len(list(test_labeled_ds))
 print('test set size : ', test_image_count)
 TEST_STEPS = test_image_count // BATCH_SIZE
 print('test step # ', TEST_STEPS)
-
-#%%
 
 # checkpoint_dir = "training_1"
 # shutil.rmtree(checkpoint_dir, ignore_errors=True)
@@ -274,7 +249,6 @@ def compilefit(model, name, max_epochs, train_ds, val_ds):
             model.save(pathlib.Path(name) / 'full_model.h5')
         except:
             print('model not saved?')
-
     return model_history
 
 def plotdf(dfobj, condition, repeat, lr=None):
@@ -311,43 +285,31 @@ def evalmodels(path, model):
     results = model.evaluate(datasett.batch(1000))
     aa.append(np.around(results[-1] * 100, decimals=1))
 
-#%%
-
 histories = {}
-
-#%%
 
 def ds_resize(image,label):
     # image = tf.image.resize(image,[96,96])
     image = tf.image.central_crop(image,0.96)
     return image,label
 
-#%%
-
 train_ds_96 = train_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
 val_ds_96 = val_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
 test_ds_96 = test_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
 
-#%%
+trials = ['t1','t2','t3','t4','t5']
+# trials = [_+'_cell' for _ in trials]
 
-# # Incompatible shapes: [64,1] vs. [64,3,3]
-# for trial in ['t1','t2','t3','t4','t5']:
-#     #min input size 75x75
-#     DenseNet121_base = tf.keras.applications.DenseNet121(input_shape=(100, 100, 3),
-#                                                 pooling=None,
-#                                                 include_top=False,
-#                                                 weights='imagenet'
-#                                                 )
-#     DenseNet121 = tf.keras.Sequential([
-#         DenseNet121_base,
-#         Dense(2, activation='softmax')
-#     ])
-#     evaluateit(DenseNet121,'DenseNet121',trial,train_ds,val_ds,test_ds)
+print('training starts')
 
-#%%
-
-trials = ['t4','t5']
-trials = [_+'_cell' for _ in trials]
+for trial in trials:
+    with mirrored_strategy.scope():
+        ResV2_hub = tf.keras.Sequential([
+            hub.KerasLayer("https://tfhub.dev/google/imagenet/resnet_v2_101/feature_vector/4",
+                           trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
+            tf.keras.layers.Dense(2, activation='softmax')
+        ])
+        ResV2_hub.build([None, 100, 100, 3])
+        evaluateit(ResV2_hub,'ResV2_hub',trial,train_ds,val_ds,test_ds)
 
 #
 # #%%
