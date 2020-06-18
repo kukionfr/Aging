@@ -284,12 +284,12 @@ def plotdf(dfobj, condition, repeat, lr=None):
     dfobj.pop('loss')
     dfobj.pop('val_loss')
     pd.DataFrame(dfobj).plot(title=condition+'_'+repeat)
-    plt.savefig('cnn/'+condition+'/'+repeat+'_accuracy.png')
+    plt.savefig('cnn/'+condition+'/'+repeat+'t1_accuracy.png')
     dfobj1.pop('lr')
     dfobj1.pop('accuracy')
     dfobj1.pop('val_accuracy')
     pd.DataFrame(dfobj1).plot(title=condition+'_'+repeat)
-    plt.savefig('cnn/'+condition+'/'+repeat+'_loss.png')
+    plt.savefig('cnn/'+condition+'/'+repeat+'t1_loss.png')
     plt.show()
 
 def evaluateit(network,networkname,repeat, train_ds, val_ds, test_ds):

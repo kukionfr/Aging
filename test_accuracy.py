@@ -3,6 +3,8 @@ import os
 import numpy as np
 import pathlib
 import pandas as pd
+import tensorflow_hub as hub
+from time import time
 
 def read_and_label(file_path):
     label = get_label(file_path)
@@ -18,7 +20,10 @@ def get_label(file_path):
     return tf.reshape(tf.where(parts[-4] == CLASS_NAMES), [])
 
 def load_compile(net):
-    model = tf.keras.models.load_model(os.path.join(*[model_dir,net,'full_model.h5']), compile=False)
+    # model = tf.keras.models.load_model(os.path.join(*[model_dir,net,'full_model.h5']),
+    model=tf.keras.models.load_model('/home/kuki/PycharmProjects/Tensorflow-Tutorial-Kyu/cnn/ResV2/full_model.h5',
+                                    custom_objects={'KerasLayer': hub.KerasLayer},
+                                    compile=False)
     model.compile(loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                   optimizer=tf.keras.optimizers.Adam(),
                   metrics=['accuracy'])
@@ -34,7 +39,7 @@ def evalmodels(path, model):
 def load_dataset(dataset_dir):
     dataset_dir = pathlib.Path(dataset_dir)
     test_image_count2 = len(list(dataset_dir.glob('image/*.jpg')))
-    list_ds = tf.data.Dataset.list_files(str(dataset_dir / 'image/*.jpg'))
+    list_ds = tf.data.Dataset.list_files(str(dataset_dir / 'image/*.jpg')).shuffle(10000)
     labeled_ds = list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
     return labeled_ds, test_image_count2
 
@@ -60,7 +65,7 @@ if gpus:
   try:
     tf.config.experimental.set_virtual_device_configuration(
         gpus[0],
-        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=9000)])
+        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=7000)])
     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
   except RuntimeError as e:
@@ -74,13 +79,14 @@ CLASS_NAMES = np.array([item.name for item in train_data_dir.glob('*') if item.n
 testdir = '/home/kuki/Desktop/Synology/aging/data/cnn_dataset/test'
 
 model_dir = 'cnn'
-ms = ['Res50V2','IncV3', 'InceptionResNetV2']
-ms = ['MobileNetV2']
-ts = ['t'+str(_) for _ in range(1,16)]
-ts = ts + ['t'+str(_)+'_aug7' for _ in range(1,6)]
-ts = ts + ['t'+str(_)+'_aug10' for _ in range(1,6)]
+# ms = ['Res50V2','IncV3', 'InceptionResNetV2']
+# ms = ['MobileNetV2']
+ms = ['ResV2_hub']
+ts = ['t'+str(_) for _ in range(1,6)]
+# ts = ts + ['t'+str(_)+'_aug7' for _ in range(1,6)]
+# ts = ts + ['t'+str(_)+'_aug10' for _ in range(1,6)]
 
-csvname = 't1_t15.csv'
+csvname = 'hub.csv'
 if os.path.exists(csvname):
     print('reading :', csvname)
     df = pd.read_csv(csvname,header=0,index_col=0)
@@ -89,6 +95,7 @@ else:
     df = pd.DataFrame([],columns=[1,3,7,10,16,19,23,25,29,31,37,41,45,49,62,68,70,76,78,82,88])
 for mm in ms:
     for t in ts:
+        start=time()
         aa = []
         print(mm,t)
         m = load_compile(os.path.join(mm,t))
@@ -117,7 +124,11 @@ for mm in ms:
         evalmodels(os.path.join(testdir,'old/sec078'),m)
         evalmodels(os.path.join(testdir,'old/sec082'),m)
         evalmodels(os.path.join(testdir,'old/sec088'),m)
-        df.loc[os.path.join(mm,t)]=aa
+        end = time()
+        print('duration: ',start-end)
+        print(aa)
+        df.loc[os.path.join(mm,t,'shuffle'
+                                 '')]=aa
     df.to_csv(csvname)
     print('saved')
 print(df)

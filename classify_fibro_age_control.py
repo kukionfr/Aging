@@ -28,7 +28,7 @@ if gpus:
   try:
     tf.config.experimental.set_virtual_device_configuration(
         gpus[0],
-        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=9000)])
+        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=8000)])
     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
   except RuntimeError as e:
@@ -46,8 +46,9 @@ BATCH_SIZE = 64
 val_fraction = 30
 max_epochs= 300
 
-augment_degree = 0
-class_target_sizes = [300, 400] #old, young
+augment_degree = 0.05
+samplesize = [300, 400] #old, young
+shuffle_buffer_size = 1000000  # take first 100 from dataset and shuffle and pick one.
 
 def read_and_label(file_path):
     label = get_label(file_path)
@@ -86,42 +87,39 @@ def augment(image, label):
     image = tf.image.random_flip_up_down(image, seed=5)  # cell orientation
     return image, label
 
-def balance(dataset_dir, class_target_sizes):
-    balanced_ds = [0]
-    buffer = np.max(class_target_sizes)*2
-    for CLASS, n in zip(CLASS_NAMES, class_target_sizes):
-        sections = [_ for _ in dataset_dir.glob(CLASS+'/*')]
-        for idx, section in enumerate(sections):
-            section = os.path.join(section, 'image/*.jpg')
-            # list_ds = tf.data.Dataset.list_files(section, shuffle=False)
-            list_ds = tf.data.Dataset.list_files(section)
-            # downsample if too big,
+def balance(data_dir):
+    tmp = [0]
+    for CLASS, n in zip(CLASS_NAMES, samplesize):
+        secs = [_ for _ in data_dir.glob(CLASS+'/*')]
+        for idx,sec in enumerate(secs):
+            sec = os.path.join(sec, 'image/*.jpg')
+            list_ds = tf.data.Dataset.list_files(sec)
+            # subsample
             list_ds = (list_ds
-                       .shuffle(len(list(list_ds)))
+                       .shuffle(shuffle_buffer_size)
                        .take(n)
                        )
             labeled_ds = list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
-            labeled_ds_org = list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
-            # upsample using augmentation if too small
-            sampleN = len(list(labeled_ds_org))
+
+            # add augment
+            sampleN = len(list(labeled_ds))
             while sampleN < n:
-                labeled_ds_aug = (labeled_ds_org
-                                  .shuffle(sampleN)
+                labeled_ds_aug = (labeled_ds
+                                  .shuffle(shuffle_buffer_size)
                                   .take(n-sampleN)
                                   .map(augment,num_parallel_calls=AUTOTUNE)
                                   )
-                # original + augmented image
                 labeled_ds = labeled_ds.concatenate(labeled_ds_aug)
                 sampleN = len(list(labeled_ds))
-            # labeled_ds.shuffle(buffer)
-            print(CLASS, ' sample size balanced to ', sampleN)
+            print('list_ds: ', len(list(labeled_ds)),CLASS)
             # append
-            if balanced_ds[0] == 0:
-                balanced_ds[idx] = labeled_ds
+            if tmp[0] == 0:
+                tmp[idx] = labeled_ds
             else:
-                labeled_ds = balanced_ds[0].concatenate(labeled_ds)
-                balanced_ds[0] = labeled_ds
-    return balanced_ds[0].shuffle(buffer)
+                labeled_ds = tmp[0].concatenate(labeled_ds)
+                tmp[0] = labeled_ds
+        print(CLASS, ': sample size =', len(list(tmp[0])))
+    return tmp[0].shuffle(shuffle_buffer_size)
 
 # list location of all training images
 train_data_dir = '/home/kuki/Desktop/Synology/aging/data/cnn_dataset/train'
@@ -130,7 +128,9 @@ CLASS_NAMES = np.array([item.name for item in train_data_dir.glob('*') if item.n
 CLASS_NAMES = sorted(CLASS_NAMES, key=str.lower) #sort alphabetically case-insensitive
 
 
-train_labeled_ds = balance(train_data_dir, class_target_sizes)
+
+
+train_labeled_ds = balance(train_data_dir)
 train_image_count = len(list(train_labeled_ds))
 print('training set size : ', train_image_count)
 val_image_count = train_image_count // 100 * val_fraction
@@ -151,11 +151,13 @@ for idx, elem in enumerate(train_labeled_ds.take(100)):
     plt.title(CLASS_NAMES[label].title())
     plt.axis('off')
 plt.show()
+target= 'cnn/ResV2_hub_t2'
+if not os.path.exists(target): os.mkdir(target)
+plt.savefig(target + '/_training data.png')
 
 train_ds = (train_labeled_ds
             .skip(val_image_count)
-            # .shuffle(buffer_size=len(list(train_labeled_ds)))
-            .shuffle(buffer_size=1000000)
+            .shuffle(buffer_size=shuffle_buffer_size)
             .repeat()
             .batch(BATCH_SIZE)
             .prefetch(buffer_size=AUTOTUNE)
@@ -165,15 +167,11 @@ val_ds = (train_labeled_ds
           .take(val_image_count)
           .repeat()
           .batch(BATCH_SIZE)
-          .prefetch(buffer_size=AUTOTUNE)
-          )
-
-print('training set size : ', len(list(train_labeled_ds))-val_image_count)
-print('validation set size : ', val_image_count)
+          .prefetch(buffer_size=AUTOTUNE))
 
 test_data_dir = '/home/kuki/Desktop/Synology/aging/data/cnn_dataset/test'
 test_data_dir = pathlib.Path(test_data_dir)
-test_labeled_ds = balance(test_data_dir, class_target_sizes)
+test_labeled_ds = balance(test_data_dir)
 
 plt.figure(figsize=(10,10))
 for idx,elem in enumerate(test_labeled_ds.take(100)):
@@ -184,28 +182,48 @@ for idx,elem in enumerate(test_labeled_ds.take(100)):
     plt.title(CLASS_NAMES[label].title())
     plt.axis('off')
 plt.show()
+plt.savefig(target + '/_testing data.png')
+
 
 test_ds = (test_labeled_ds
+           # .cache("./cache/fibro_test.tfcache")
+           .shuffle(buffer_size=shuffle_buffer_size)
            .repeat()
            .batch(BATCH_SIZE)
            .prefetch(buffer_size=AUTOTUNE)  # time it takes to produce next element
            )
-
-
 test_image_count = len(list(test_labeled_ds))
 print('test set size : ', test_image_count)
 TEST_STEPS = test_image_count // BATCH_SIZE
 print('test step # ', TEST_STEPS)
 
+# checkpoint_dir = "training_1"
+# shutil.rmtree(checkpoint_dir, ignore_errors=True)
+
 
 def get_callbacks(name):
     return [
+        modeling.EpochDots(),
         tf.keras.callbacks.EarlyStopping(monitor='val_sparse_categorical_crossentropy',
                                          patience=50, restore_best_weights=True),
+        # tf.keras.callbacks.TensorBoard(log_dir/name, histogram_freq=1),
+        # tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_dir + "/{}/cp.ckpt".format(name),
+        #                                    verbose=0,
+        #                                    monitor='val_sparse_categorical_crossentropy',
+        #                                    save_weights_only=True,
+        #                                    save_best_only=True),
         tf.keras.callbacks.ReduceLROnPlateau(monitor='val_sparse_categorical_crossentropy',
-                                             factor=0.1, patience=20, verbose=1, mode='auto',
+                                             factor=0.1, patience=10, verbose=0, mode='auto',
                                              min_delta=0.0001, cooldown=0, min_lr=0),
     ]
+
+
+# lr_schedule = tf.keras.optimizers.schedules.InverseTimeDecay(
+#     1e-4,
+#     decay_steps=STEPS_PER_EPOCH * 100,
+#     decay_rate=1,
+#     staircase=False)
+
 
 def compilefit(model, name, max_epochs, train_ds, val_ds):
     model.compile(optimizer=tf.keras.optimizers.Adam(),
@@ -243,20 +261,26 @@ def plotdf(dfobj, condition, repeat='',lr=None):
     dfobj.pop('sparse_categorical_crossentropy')
     dfobj.pop('val_sparse_categorical_crossentropy')
     pd.DataFrame(dfobj).plot(title=condition+repeat)
-    plt.savefig('cnn/' + condition + '/' + repeat + 't1_accuracy.png')
+    plt.savefig('cnn/' + condition + '/' + repeat + '_accuracy.png')
     dfobj1.pop('lr')
     dfobj1.pop('accuracy')
     dfobj1.pop('val_accuracy')
     pd.DataFrame(dfobj1).plot(title=condition+repeat)
-    plt.savefig('cnn/' + condition + '/' + repeat + 't1_loss.png')
+    plt.savefig('cnn/' + condition + '/' + repeat + '_loss.png')
     if lr is not 'decay':
         dfobj2.pop('sparse_categorical_crossentropy')
         dfobj2.pop('val_sparse_categorical_crossentropy')
         dfobj2.pop('accuracy')
         dfobj2.pop('val_accuracy')
         pd.DataFrame(dfobj2).plot(title=condition+repeat)
-        plt.savefig('cnn/' + condition + '/' + repeat + 't1_lr.png')
+        plt.savefig('cnn/' + condition + '/' + repeat + '_lr.png')
     plt.show()
+
+
+histories = {}
+
+
+
 
 def evaluateit(network,networkname,repeat, train_ds, val_ds, test_ds):
     histories[networkname] = compilefit(network, 'cnn/'+networkname+'/'+repeat, max_epochs, train_ds, val_ds)
@@ -264,117 +288,30 @@ def evaluateit(network,networkname,repeat, train_ds, val_ds, test_ds):
     plotdf(histories[networkname].history,networkname,repeat)
     print('test acc', results[-1] * 100)
 
-def load_dataset(dataset_dir):
-    dataset_dir = pathlib.Path(dataset_dir)
-    test_image_count2 = len(list(dataset_dir.glob('image/*.jpg')))
-    list_ds = tf.data.Dataset.list_files(str(dataset_dir / 'image/*.jpg'))
-    labeled_ds = list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
-    return labeled_ds, test_image_count2
+trials = ['t'+str(_)+'_300400_aug5' for _ in range(1,2)]
+# trials = trials + ['t'+str(_) for _ in range(6,11)]
 
-def evalmodels(path, model):
-    datasett, datasettsize = load_dataset(path)
-    print('datasetsize',datasettsize)
-    results = model.evaluate(datasett.batch(1000))
-    aa.append(np.around(results[-1] * 100, decimals=1))
+for trial in trials:
+    start = time.time
+    IncV3_hub = tf.keras.Sequential([
+        hub.KerasLayer("https://tfhub.dev/google/imagenet/inception_v3/feature_vector/4",
+                       trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
+        tf.keras.layers.Dense(2, activation='softmax')
+    ])
+    IncV3_hub.build([None, 100, 100, 3])  # Batch input shape.
+    evaluateit(IncV3_hub,'IncV3_hub_t2',trial,train_ds,val_ds,test_ds)
+    end = time.time
+    print('duration : ', end-start)
 
-#%%
-
-histories = {}
-
-#%%
-
-def ds_resize(image,label):
-    # image = tf.image.resize(image,[96,96])
-    image = tf.image.central_crop(image,0.96)
-    return image,label
-
-
-train_ds_96 = train_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
-val_ds_96 = val_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
-test_ds_96 = test_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
-
-
-# # Incompatible shapes: [64,1] vs. [64,3,3]
-# for trial in ['t1','t2','t3','t4','t5']:
-#     #min input size 75x75
-#     DenseNet121_base = tf.keras.applications.DenseNet121(input_shape=(100, 100, 3),
-#                                                 pooling=None,
-#                                                 include_top=False,
-#                                                 weights='imagenet'
-#                                                 )
-#     DenseNet121 = tf.keras.Sequential([
-#         DenseNet121_base,
-#         Dense(2, activation='softmax')
-#     ])
-#     evaluateit(DenseNet121,'DenseNet121',trial,train_ds,val_ds,test_ds)
-
-trials = ['t1','t2','t3','t4','t5']
-trials = trials + ['t'+str(_) for _ in range(6,11)]
-
-for trial in trials[1:]:
+for trial in trials:
+    start = time.time
     ResV2_hub = tf.keras.Sequential([
         hub.KerasLayer("https://tfhub.dev/google/imagenet/resnet_v2_101/feature_vector/4",
                        trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
         tf.keras.layers.Dense(2, activation='softmax')
     ])
     ResV2_hub.build([None, 100, 100, 3])
-    evaluateit(ResV2_hub,'ResV2_hub',trial,train_ds,val_ds,test_ds)
-
-#
-# trials = ['t1','t2','t3','t4','t5']
-# trials = [ _+'_aug7' for _ in trials]
-#
-# for trial in trials:
-#     # shape 96, 128, 160, 192, 224
-#     MobileNetV2_base = tf.keras.applications.MobileNetV2(input_shape=(96, 96, 3),
-#                                                     pooling='avg',
-#                                                     include_top=False,
-#                                                     weights='imagenet'
-#                                                     )
-#     MobileNetV2 = tf.keras.Sequential([
-#         MobileNetV2_base,
-#             Dense(2, activation='softmax')
-#         ])
-#     evaluateit(MobileNetV2,'MobileNetV2',trial,train_ds_96,val_ds_96,test_ds_96)
-#
-# for trial in trials:
-#     # min input 32x32
-#     ResV2_base = tf.keras.applications.ResNet50V2(input_shape=(100, 100, 3),
-#                                                 pooling='avg',
-#                                                 include_top=False,
-#                                                 weights='imagenet'
-#                                                 )
-#     ResV2 = tf.keras.Sequential([
-#         ResV2_base,
-#         Dense(2, activation='softmax')
-#     ])
-#     evaluateit(ResV2,'Res50V2',trial,train_ds,val_ds,test_ds)
-#
-#
-# for trial in trials:
-#     #min input size 75x75
-#     IncV3_base = tf.keras.applications.InceptionV3(input_shape=(100, 100, 3),
-#                                                 pooling=None,
-#                                                 include_top=False,
-#                                                 weights='imagenet'
-#                                                 )
-#     IncV3 = tf.keras.Sequential([
-#         IncV3_base,
-#         Dense(2, activation='softmax')
-#     ])
-#     evaluateit(IncV3,'IncV3',trial,train_ds,val_ds,test_ds)
-#
-#
-# for trial in trials:
-#     #min input size 75x75
-#     InceptionResNetV2_base = tf.keras.applications.InceptionResNetV2(input_shape=(100, 100, 3),
-#                                                 pooling=None,
-#                                                 include_top=False,
-#                                                 weights='imagenet'
-#                                                 )
-#     InceptionResNetV2 = tf.keras.Sequential([
-#         InceptionResNetV2_base,
-#         Dense(2, activation='softmax')
-#     ])
-#     evaluateit(InceptionResNetV2,'InceptionResNetV2',trial,train_ds,val_ds,test_ds)
+    evaluateit(ResV2_hub,'ResV2_hub_t2',trial,train_ds,val_ds,test_ds)
+    end = time.time
+    print('duration : ', end-start)
 
