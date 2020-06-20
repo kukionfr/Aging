@@ -1,6 +1,5 @@
 import tensorflow as tf
 from tensorflow_docs import modeling
-import tensorflow_datasets as tfds
 import tensorflow_hub as hub
 import pandas as pd
 import numpy as np
@@ -28,14 +27,13 @@ if gpus:
   try:
     tf.config.experimental.set_virtual_device_configuration(
         gpus[0],
-        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=8000)])
+        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=8500)])
     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
   except RuntimeError as e:
     # Virtual devices must be set before GPUs have been initialized
     print(e)
 
-tfds.disable_progress_bar()  # disable tqdm progress bar
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 print("TensorFlow Version: ", tf.__version__)
 print("Number of GPU available: ", len(tf.config.experimental.list_physical_devices("GPU")))
@@ -46,8 +44,8 @@ BATCH_SIZE = 64
 val_fraction = 30
 max_epochs= 300
 
-augment_degree = 0.05
-samplesize = [300, 400] #old, young
+augment_degree = 0.1
+samplesize = [1200, 1600] #old, young
 shuffle_buffer_size = 1000000  # take first 100 from dataset and shuffle and pick one.
 
 def read_and_label(file_path):
@@ -70,8 +68,8 @@ def occlude(image, file_path):
     mask = tf.image.convert_image_dtype(mask, tf.float16)
     mask = tf.image.resize(mask, [IMG_WIDTH, IMG_HEIGHT])
     mask = tf.math.greater(mask, 0.25)
-    # invert mask
-    mask = tf.math.logical_not(mask)
+    # comment below for cell only
+    # mask = tf.math.logical_not(mask)
     maskedimg = tf.where(mask, image, tf.ones(tf.shape(image)))
     return maskedimg
 
@@ -99,12 +97,14 @@ def balance(data_dir):
                        .shuffle(shuffle_buffer_size)
                        .take(n)
                        )
-            labeled_ds = list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
-
+            labeled_ds_org = list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
+            labeled_ds = (list_ds
+                          .map(read_and_label, num_parallel_calls=AUTOTUNE)
+                          .map(augment, num_parallel_calls=AUTOTUNE))
             # add augment
             sampleN = len(list(labeled_ds))
             while sampleN < n:
-                labeled_ds_aug = (labeled_ds
+                labeled_ds_aug = (labeled_ds_org
                                   .shuffle(shuffle_buffer_size)
                                   .take(n-sampleN)
                                   .map(augment,num_parallel_calls=AUTOTUNE)
@@ -122,7 +122,7 @@ def balance(data_dir):
     return tmp[0].shuffle(shuffle_buffer_size)
 
 # list location of all training images
-train_data_dir = '/home/kuki2070s2/Desktop/Synology/aging/data/cnn_dataset/train'
+train_data_dir = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_dataset/train'])
 train_data_dir = pathlib.Path(train_data_dir)
 CLASS_NAMES = np.array([item.name for item in train_data_dir.glob('*') if item.name != ".DS_store"])
 CLASS_NAMES = sorted(CLASS_NAMES, key=str.lower) #sort alphabetically case-insensitive
@@ -151,9 +151,10 @@ for idx, elem in enumerate(train_labeled_ds.take(100)):
     plt.title(CLASS_NAMES[label].title())
     plt.axis('off')
 plt.show()
-target= 'cnn/ResV2_hub_t2'
+
+target= 'cnn/ResV2_hub'
 if not os.path.exists(target): os.mkdir(target)
-plt.savefig(target + '/_training data.png')
+plt.savefig(target + '/aug0_training data.png')
 
 train_ds = (train_labeled_ds
             .skip(val_image_count)
@@ -169,7 +170,7 @@ val_ds = (train_labeled_ds
           .batch(BATCH_SIZE)
           .prefetch(buffer_size=AUTOTUNE))
 
-test_data_dir = '/home/kuki2070s2/Desktop/Synology/aging/data/cnn_dataset/test'
+test_data_dir = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_dataset/test'])
 test_data_dir = pathlib.Path(test_data_dir)
 test_labeled_ds = balance(test_data_dir)
 
@@ -182,8 +183,9 @@ for idx,elem in enumerate(test_labeled_ds.take(100)):
     plt.title(CLASS_NAMES[label].title())
     plt.axis('off')
 plt.show()
-plt.savefig(target + '/_testing data.png')
 
+
+plt.savefig(target + '/aug0_test_data.png')
 
 test_ds = (test_labeled_ds
            # .cache("./cache/fibro_test.tfcache")
@@ -280,17 +282,16 @@ def plotdf(dfobj, condition, repeat='',lr=None):
 histories = {}
 
 
-
-
 def evaluateit(network,networkname,repeat, train_ds, val_ds, test_ds):
     histories[networkname] = compilefit(network, 'cnn/'+networkname+'/'+repeat, max_epochs, train_ds, val_ds)
     results = network.evaluate(test_ds, steps=TEST_STEPS)
     plotdf(histories[networkname].history,networkname,repeat)
     print('test acc', results[-1] * 100)
 
-trials = ['t'+str(_)+'_300400_aug5' for _ in range(1,2)]
+trials = ['t'+str(_)+'_12001600_aug10' for _ in range(1,4)]
 # trials = trials + ['t'+str(_) for _ in range(6,11)]
 
+duration=[]
 for trial in trials:
     start = time()
     IncV3_hub = tf.keras.Sequential([
@@ -299,19 +300,56 @@ for trial in trials:
         tf.keras.layers.Dense(2, activation='softmax')
     ])
     IncV3_hub.build([None, 100, 100, 3])  # Batch input shape.
-    evaluateit(IncV3_hub,'IncV3_hub_t2',trial,train_ds,val_ds,test_ds)
+    evaluateit(IncV3_hub,'IncV3_hub',trial,train_ds,val_ds,test_ds)
     end = time()
+    duration.append(end-start)
     print('duration : ', end-start)
 
 for trial in trials:
     start = time()
-    ResV2_hub = tf.keras.Sequential([
-        hub.KerasLayer("https://tfhub.dev/google/imagenet/resnet_v2_101/feature_vector/4",
-                       trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
+    # #min input size 76x76
+    IncV3_base = tf.keras.applications.InceptionV3(input_shape=(100, 100, 3),
+                                                pooling=None,
+                                                include_top=False,
+                                                weights='imagenet'
+                                                )
+    IncV3 = tf.keras.Sequential([
+        IncV3_base,
         tf.keras.layers.Dense(2, activation='softmax')
     ])
-    ResV2_hub.build([None, 100, 100, 3])
-    evaluateit(ResV2_hub,'ResV2_hub_t2',trial,train_ds,val_ds,test_ds)
+    evaluateit(IncV3,'IncV3_keras_imagenet',trial,train_ds,val_ds,test_ds)
     end = time()
+    duration.append(end-start)
     print('duration : ', end-start)
 
+for trial in trials:
+    start = time()
+    # #min input size 76x76
+    IncV3_base = tf.keras.applications.InceptionV3(input_shape=(100, 100, 3),
+                                                pooling=None,
+                                                include_top=False,
+                                                weights=None
+                                                )
+    IncV3 = tf.keras.Sequential([
+        IncV3_base,
+        tf.keras.layers.Dense(2, activation='softmax')
+    ])
+    evaluateit(IncV3,'IncV3_keras_imagenet',trial,train_ds,val_ds,test_ds)
+    end = time()
+    duration.append(end-start)
+    print('duration : ', end-start)
+# for trial in trials:
+#     start = time()
+#     ResV2_hub = tf.keras.Sequential([
+#         hub.KerasLayer("https://tfhub.dev/google/imagenet/resnet_v2_101/feature_vector/4",
+#                        trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
+#         tf.keras.layers.Dense(2, activation='softmax')
+#     ])
+#     ResV2_hub.build([None, 100, 100, 3])
+#     evaluateit(ResV2_hub,'ResV2_hub',trial,train_ds,val_ds,test_ds)
+#     end = time()
+#     duration.append(end - start)
+#     print('duration : ', end-start)
+
+print('duration : ', duration)
+print('5res+5inc :',np.sum(duration))

@@ -6,14 +6,57 @@ import pandas as pd
 import tensorflow_hub as hub
 from time import time
 
+gpu_memory = 8500 # 2080Ti
+# gpu_memory = 6500 # 2070S
+
+# cudnn fail due to memory
+# solution #1
+# gpus = tf.config.experimental.list_physical_devices('GPU')
+# if gpus:
+#   try:
+#     # Currently, memory growth needs to be the same across GPUs
+#     for gpu in gpus:
+#       tf.config.experimental.set_memory_growth(gpu, False)
+#     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+#     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+#   except RuntimeError as e:
+#     # Memory growth must be set before GPUs have been initialized
+#     print(e)
+
+# solution #2
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+  # Restrict TensorFlow to only allocate 1GB of memory on the first GPU
+  try:
+    tf.config.experimental.set_virtual_device_configuration(
+        gpus[0],
+        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=gpu_memory)])
+    logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+    print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+  except RuntimeError as e:
+    # Virtual devices must be set before GPUs have been initialized
+    print(e)
+
 def read_and_label(file_path):
     label = get_label(file_path)
     img = tf.io.read_file(file_path)
     img = tf.image.decode_jpeg(img, channels=3)
     img = tf.image.convert_image_dtype(img, tf.float32)
     img = tf.image.resize(img, [100, 100])
-    # img = occlude(img, file_path)
+    img = occlude(img, file_path)
     return img, label
+
+def occlude(image, file_path):
+    maskpth = tf.strings.regex_replace(file_path, 'image', 'label')
+    mask = tf.io.read_file(maskpth)
+    mask = tf.image.decode_jpeg(mask, channels=1)
+    mask = tf.image.convert_image_dtype(mask, tf.float32)
+    mask = tf.image.resize(mask, [100, 100])
+    mask = tf.math.greater(mask, 0.25)
+    # comment below for cell only
+    # mask = tf.math.logical_not(mask)
+    maskedimg = tf.where(mask, image, tf.ones(tf.shape(image)))
+    return maskedimg
 
 def get_label(file_path):
     parts = tf.strings.split(file_path, os.path.sep)
@@ -21,7 +64,6 @@ def get_label(file_path):
 
 def load_compile(net):
     model = tf.keras.models.load_model(os.path.join(*[model_dir,net,'full_model.h5']),
-    # model=tf.keras.models.load_model('/home/kuki/PycharmProjects/Tensorflow-Tutorial-Kyu/cnn/ResV2/full_model.h5',
                                     custom_objects={'KerasLayer': hub.KerasLayer},
                                     compile=False)
     model.compile(loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
@@ -43,56 +85,31 @@ def load_dataset(dataset_dir):
     labeled_ds = list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
     return labeled_ds, test_image_count2
 
-# cudnn fail due to memory
-
-# solution #1
-# gpus = tf.config.experimental.list_physical_devices('GPU')
-# if gpus:
-#   try:
-#     # Currently, memory growth needs to be the same across GPUs
-#     for gpu in gpus:
-#       tf.config.experimental.set_memory_growth(gpu, False)
-#     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-#     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-#   except RuntimeError as e:
-#     # Memory growth must be set before GPUs have been initialized
-#     print(e)
-
-# solution #2
-gpus = tf.config.experimental.list_physical_devices('GPU')
-if gpus:
-  # Restrict TensorFlow to only allocate 1GB of memory on the first GPU
-  try:
-    tf.config.experimental.set_virtual_device_configuration(
-        gpus[0],
-        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=7000)])
-    logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-    print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-  except RuntimeError as e:
-    # Virtual devices must be set before GPUs have been initialized
-    print(e)
 
 AUTOTUNE = tf.data.experimental.AUTOTUNE
-train_data_dir = '/home/kuki2070s2/Desktop/Synology/aging/data/cnn_dataset/train'
+train_data_dir = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_dataset/train'])
 train_data_dir = pathlib.Path(train_data_dir)
 CLASS_NAMES = np.array([item.name for item in train_data_dir.glob('*') if item.name != ".DS_store"])
-testdir = '/home/kuki2070s2/Desktop/Synology/aging/data/cnn_dataset/test'
+testdir = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_dataset/test'])
 
 model_dir = 'cnn'
-# ms = ['Res50V2','IncV3', 'InceptionResNetV2']
-# ms = ['MobileNetV2']
-ms = ['ResV2_hub_t2','IncV3_hub_t2']
-ts = ['t'+str(_)+'_300400_aug5' for _ in range(1,2)]
-# ts = ts + ['t'+str(_)+'_aug7' for _ in range(1,6)]
-# ts = ts + ['t'+str(_)+'_aug10' for _ in range(1,6)]
+model_dir = '/home/kuki/Desktop/Synology/aging/data/cnn_models/June16/conclude/'
+
+ms = ['IncV3_hub']
+ts = ['t'+str(_)+'_300400_aug0_cel' for _ in range(1,4)]
+# ts = ts + ['t'+str(_)+'_300400_aug0_cel' for _ in range(1,4)]
+
+
 
 csvname = 'hub.csv'
+csvname = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_models', csvname])
+
 if os.path.exists(csvname):
     print('reading :', csvname)
     df = pd.read_csv(csvname,header=0,index_col=0)
 else:
     print('empty')
-    df = pd.DataFrame([],columns=[1,3,7,10,16,19,23,25,29,31,37,41,45,49,62,68,70,76,78,82,88])
+    df = pd.DataFrame([],columns=[1,3,7,10,16,19,23,25,29,31,37,41,45,49,62,68,70,76,78,82,88,'Train','Test'])
 duration =[]
 for mm in ms:
     for t in ts:
@@ -128,7 +145,9 @@ for mm in ms:
         end = time()
         print('duration: ',end-start)
         duration.append(end-start)
-        df.loc[os.path.join(mm,t)]=aa
+        aa.append(np.around(np.average(aa[0:6] + aa[9:17]),decimals=1))
+        aa.append(np.around(np.average(aa[6:9] + aa[17:21]),decimals=1))
+        df.loc[os.path.join(mm,t+'_oncel')]=aa
     df.to_csv(csvname)
     print('saved')
 print(df)
