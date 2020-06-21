@@ -1,6 +1,5 @@
 import tensorflow as tf
 from tensorflow_docs import modeling
-import tensorflow_datasets as tfds
 import tensorflow_hub as hub
 import pandas as pd
 import numpy as np
@@ -9,33 +8,34 @@ import os
 import pathlib
 from time import time
 # solution #1
-gpus = tf.config.experimental.list_physical_devices('GPU')
-if gpus:
-  try:
-    # Currently, memory growth needs to be the same across GPUs
-    for gpu in gpus:
-      tf.config.experimental.set_memory_growth(gpu, True)
-    logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-    print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-  except RuntimeError as e:
-    # Memory growth must be set before GPUs have been initialized
-    print(e)
-
-# solution #2
 # gpus = tf.config.experimental.list_physical_devices('GPU')
 # if gpus:
-#   # Restrict TensorFlow to only allocate 1GB of memory on the first GPU
 #   try:
-#     tf.config.experimental.set_virtual_device_configuration(
-#         gpus[0],
-#         [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=8000)])
+#     # Currently, memory growth needs to be the same across GPUs
+#     for gpu in gpus:
+#       tf.config.experimental.set_memory_growth(gpu, True)
 #     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
 #     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
 #   except RuntimeError as e:
-#     # Virtual devices must be set before GPUs have been initialized
+#     # Memory growth must be set before GPUs have been initialized
 #     print(e)
 
-tfds.disable_progress_bar()  # disable tqdm progress bar
+memorysize = 7000 #2070
+# # solution #2
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+  try:
+    tf.config.experimental.set_virtual_device_configuration(
+        gpus[0],
+        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=memorysize)])
+    tf.config.experimental.set_virtual_device_configuration(
+        gpus[1],
+        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=memorysize)])
+    logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+    print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+  except RuntimeError as e:
+    print(e)
+
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 print("TensorFlow Version: ", tf.__version__)
 print("Number of GPU available: ", len(tf.config.experimental.list_physical_devices("GPU")))
@@ -47,7 +47,7 @@ val_fraction = 30
 max_epochs= 300
 
 augment_degree = 0.05
-samplesize = [300, 400] #old, young
+samplesize = [1200, 1600] #old, young
 shuffle_buffer_size = 1000000  # take first 100 from dataset and shuffle and pick one.
 
 def read_and_label(file_path):
@@ -99,12 +99,16 @@ def balance(data_dir):
                        .shuffle(shuffle_buffer_size)
                        .take(n)
                        )
-            labeled_ds = list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
+            labeled_ds_org = list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
+            labeled_ds = (list_ds
+                          .map(read_and_label, num_parallel_calls=AUTOTUNE)
+                          .map(augment,num_parallel_calls=AUTOTUNE)
+                          )
 
             # add augment
             sampleN = len(list(labeled_ds))
             while sampleN < n:
-                labeled_ds_aug = (labeled_ds
+                labeled_ds_aug = (labeled_ds_org
                                   .shuffle(shuffle_buffer_size)
                                   .take(n-sampleN)
                                   .map(augment,num_parallel_calls=AUTOTUNE)
@@ -128,8 +132,6 @@ CLASS_NAMES = np.array([item.name for item in train_data_dir.glob('*') if item.n
 CLASS_NAMES = sorted(CLASS_NAMES, key=str.lower) #sort alphabetically case-insensitive
 
 
-
-
 train_labeled_ds = balance(train_data_dir)
 train_image_count = len(list(train_labeled_ds))
 print('training set size : ', train_image_count)
@@ -151,9 +153,9 @@ for idx, elem in enumerate(train_labeled_ds.take(100)):
     plt.title(CLASS_NAMES[label].title())
     plt.axis('off')
 plt.show()
-target= 'cnn/ResV2_hub_t2'
+target= 'cnn/IncV2_hub'
 if not os.path.exists(target): os.mkdir(target)
-plt.savefig(target + '/_training data.png')
+plt.savefig(target + '/aug5_all_training data.png')
 
 train_ds = (train_labeled_ds
             .skip(val_image_count)
@@ -182,7 +184,7 @@ for idx,elem in enumerate(test_labeled_ds.take(100)):
     plt.title(CLASS_NAMES[label].title())
     plt.axis('off')
 plt.show()
-plt.savefig(target + '/_testing data.png')
+plt.savefig(target + '/aug5_all_testing data.png')
 
 
 test_ds = (test_labeled_ds
@@ -200,7 +202,6 @@ print('test step # ', TEST_STEPS)
 # checkpoint_dir = "training_1"
 # shutil.rmtree(checkpoint_dir, ignore_errors=True)
 
-
 def get_callbacks(name):
     return [
         modeling.EpochDots(),
@@ -217,13 +218,11 @@ def get_callbacks(name):
                                              min_delta=0.0001, cooldown=0, min_lr=0),
     ]
 
-
 # lr_schedule = tf.keras.optimizers.schedules.InverseTimeDecay(
 #     1e-4,
 #     decay_steps=STEPS_PER_EPOCH * 100,
 #     decay_rate=1,
 #     staircase=False)
-
 
 def compilefit(model, name, max_epochs, train_ds, val_ds):
     model.compile(optimizer=tf.keras.optimizers.Adam(),
@@ -248,7 +247,6 @@ def compilefit(model, name, max_epochs, train_ds, val_ds):
             model.save(pathlib.Path(name) / 'full_model.h5')
         except:
             print('model not saved?')
-
     return model_history
 
 def plotdf(dfobj, condition, repeat, lr=None):
@@ -258,12 +256,12 @@ def plotdf(dfobj, condition, repeat, lr=None):
     dfobj.pop('loss')
     dfobj.pop('val_loss')
     pd.DataFrame(dfobj).plot(title=condition+'_'+repeat)
-    plt.savefig('cnn/'+condition+'/'+repeat+'t1_accuracy.png')
+    plt.savefig('cnn/'+condition+'/'+repeat+'_accuracy.png')
     dfobj1.pop('lr')
     dfobj1.pop('accuracy')
     dfobj1.pop('val_accuracy')
     pd.DataFrame(dfobj1).plot(title=condition+'_'+repeat)
-    plt.savefig('cnn/'+condition+'/'+repeat+'t1_loss.png')
+    plt.savefig('cnn/'+condition+'/'+repeat+'_loss.png')
     plt.show()
 
 histories = {}
@@ -274,36 +272,81 @@ def evaluateit(network,networkname,repeat, train_ds, val_ds, test_ds):
     plotdf(histories[networkname].history,networkname,repeat)
     print('test acc', results[-1] * 100)
 
-trials = ['t'+str(_)+'_300400_aug5' for _ in range(1,2)]
+trials = ['t'+str(_)+'_12001600_aug10_all' for _ in range(1,4)]
 # trials = trials + ['t'+str(_) for _ in range(6,11)]
+
+duration=[]
+# for trial in trials:
+#     start = time()
+#     # with mirrored_strategy.scope():
+#     print('downloading model')
+#     ResV2_hub = tf.keras.Sequential([
+#         # tf.keras.layers.InputLayer(input_shape=(100,100,3)),
+#         hub.KerasLayer("https://tfhub.dev/google/imagenet/resnet_v2_101/feature_vector/4",
+#                        trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
+#         tf.keras.layers.Dense(2, activation='softmax')
+#     ])
+#     ResV2_hub.build([None, 100, 100, 3])
+#     print('training...........')
+#     evaluateit(ResV2_hub,'ResV2_hub_t2',trial,train_ds,val_ds,test_ds)
+#     end = time()
+#     duration.append(end - start)
+#     print('duration : ', end-start)
 mirrored_strategy = tf.distribute.MirroredStrategy()
 for trial in trials:
     start = time()
     with mirrored_strategy.scope():
         print('downloading model')
         IncV3_hub = tf.keras.Sequential([
+            # tf.keras.layers.InputLayer(input_shape=(100, 100, 3)),
             hub.KerasLayer("https://tfhub.dev/google/imagenet/inception_v3/feature_vector/4",
                            trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
             tf.keras.layers.Dense(2, activation='softmax')
         ])
         IncV3_hub.build([None, 100, 100, 3])  # Batch input shape.
         print('training...........')
-        evaluateit(IncV3_hub,'IncV3_hub_t2',trial,train_ds,val_ds,test_ds)
+        # evaluateit(IncV3_hub,'IncV3_hub_t2',trial,train_ds,val_ds,test_ds)
     end = time()
+    duration.append(end-start)
     print('duration : ', end-start)
 
 for trial in trials:
     start = time()
+    # #min input size 76x76
     with mirrored_strategy.scope():
-        print('downloading model')
-        ResV2_hub = tf.keras.Sequential([
-            hub.KerasLayer("https://tfhub.dev/google/imagenet/resnet_v2_101/feature_vector/4",
-                           trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
+        IncV3_base = tf.keras.applications.InceptionV3(input_shape=(100, 100, 3),
+                                                    pooling=None,
+                                                    include_top=False,
+                                                    weights='imagenet'
+                                                    )
+        IncV3 = tf.keras.Sequential([
+            IncV3_base,
             tf.keras.layers.Dense(2, activation='softmax')
         ])
-        ResV2_hub.build([None, 100, 100, 3])
-        print('training...........')
-        evaluateit(ResV2_hub,'ResV2_hub_t2',trial,train_ds,val_ds,test_ds)
+
+        IncV3_base.summary()
+        # evaluateit(IncV3,'IncV3_keras_imagenet',trial,train_ds,val_ds,test_ds)
     end = time()
+    duration.append(end-start)
     print('duration : ', end-start)
 
+for trial in trials:
+    start = time()
+    # #min input size 76x76
+    with mirrored_strategy.scope():
+        IncV3_base = tf.keras.applications.InceptionV3(input_shape=(100, 100, 3),
+                                                    pooling=None,
+                                                    include_top=False,
+                                                    weights=None
+                                                    )
+        IncV3 = tf.keras.Sequential([
+            IncV3_base,
+            tf.keras.layers.Dense(2, activation='softmax')
+        ])
+        evaluateit(IncV3,'IncV3_keras_imagenet',trial,train_ds,val_ds,test_ds)
+    end = time()
+    duration.append(end-start)
+    print('duration : ', end-start)
+
+print('duration : ', duration)
+print('5res+5inc :',np.sum(duration))
