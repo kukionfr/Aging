@@ -44,8 +44,8 @@ BATCH_SIZE = 64
 val_fraction = 30
 max_epochs= 300
 
-augment_degree = 0.1
-samplesize = [1200, 1600] #old, young
+augment_degree = 0.10
+samplesize = [2400, 3200] #old, young
 shuffle_buffer_size = 1000000  # take first 100 from dataset and shuffle and pick one.
 
 def read_and_label(file_path):
@@ -101,6 +101,7 @@ def balance(data_dir):
             labeled_ds = (list_ds
                           .map(read_and_label, num_parallel_calls=AUTOTUNE)
                           .map(augment, num_parallel_calls=AUTOTUNE))
+            # labeled_ds = list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
             # add augment
             sampleN = len(list(labeled_ds))
             while sampleN < n:
@@ -152,7 +153,7 @@ for idx, elem in enumerate(train_labeled_ds.take(100)):
     plt.axis('off')
 plt.show()
 
-target= 'cnn/ResV2_hub'
+target= 'cnn/IncV3_hub'
 if not os.path.exists(target): os.mkdir(target)
 plt.savefig(target + '/aug0_training data.png')
 
@@ -288,22 +289,22 @@ def evaluateit(network,networkname,repeat, train_ds, val_ds, test_ds):
     plotdf(histories[networkname].history,networkname,repeat)
     print('test acc', results[-1] * 100)
 
-trials = ['t'+str(_)+'_12001600_aug10' for _ in range(1,4)]
+trials = ['t'+str(_)+'_24003200_aug10_aug+aug' for _ in range(1,4)]
 # trials = trials + ['t'+str(_) for _ in range(6,11)]
 
 duration=[]
-for trial in trials:
-    start = time()
-    IncV3_hub = tf.keras.Sequential([
-        hub.KerasLayer("https://tfhub.dev/google/imagenet/inception_v3/feature_vector/4",
-                       trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
-        tf.keras.layers.Dense(2, activation='softmax')
-    ])
-    IncV3_hub.build([None, 100, 100, 3])  # Batch input shape.
-    evaluateit(IncV3_hub,'IncV3_hub',trial,train_ds,val_ds,test_ds)
-    end = time()
-    duration.append(end-start)
-    print('duration : ', end-start)
+# for trial in trials:
+#     start = time()
+#     IncV3_hub = tf.keras.Sequential([
+#         hub.KerasLayer("https://tfhub.dev/google/imagenet/inception_v3/feature_vector/4",
+#                        trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
+#         tf.keras.layers.Dense(2, activation='softmax')
+#     ])
+#     IncV3_hub.build([None, 100, 100, 3])  # Batch input shape.
+#     evaluateit(IncV3_hub,'IncV3_hub',trial,train_ds,val_ds,test_ds)
+#     end = time()
+#     duration.append(end-start)
+#     print('duration : ', end-start)
 
 for trial in trials:
     start = time()
@@ -334,7 +335,7 @@ for trial in trials:
         IncV3_base,
         tf.keras.layers.Dense(2, activation='softmax')
     ])
-    evaluateit(IncV3,'IncV3_keras_imagenet',trial,train_ds,val_ds,test_ds)
+    evaluateit(IncV3,'IncV3_keras_random',trial,train_ds,val_ds,test_ds)
     end = time()
     duration.append(end-start)
     print('duration : ', end-start)
@@ -352,4 +353,4 @@ for trial in trials:
 #     print('duration : ', end-start)
 
 print('duration : ', duration)
-print('5res+5inc :',np.sum(duration))
+print('total duration :',np.sum(duration))

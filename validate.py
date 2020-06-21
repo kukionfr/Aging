@@ -6,7 +6,7 @@ import pandas as pd
 import tensorflow_hub as hub
 from time import time
 
-gpu_memory = 8500 # 2080Ti
+gpu_memory = 8000 # 2080Ti
 # gpu_memory = 6500 # 2070S
 
 # cudnn fail due to memory
@@ -43,7 +43,7 @@ def read_and_label(file_path):
     img = tf.image.decode_jpeg(img, channels=3)
     img = tf.image.convert_image_dtype(img, tf.float32)
     img = tf.image.resize(img, [100, 100])
-    img = occlude(img, file_path)
+    # img = occlude(img, file_path)
     return img, label
 
 def occlude(image, file_path):
@@ -92,11 +92,12 @@ train_data_dir = pathlib.Path(train_data_dir)
 CLASS_NAMES = np.array([item.name for item in train_data_dir.glob('*') if item.name != ".DS_store"])
 testdir = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_dataset/test'])
 
-model_dir = 'cnn'
+# model_dir = 'cnn'
 model_dir = '/home/kuki/Desktop/Synology/aging/data/cnn_models/June16/conclude/'
 
-ms = ['IncV3_hub']
-ts = ['t'+str(_)+'_300400_aug0_cel' for _ in range(1,4)]
+
+ms = ['IncV3_keras_random']
+ts = ['t'+str(_)+'_12001600_aug10' for _ in range(1,4)]
 # ts = ts + ['t'+str(_)+'_300400_aug0_cel' for _ in range(1,4)]
 
 
@@ -147,7 +148,7 @@ for mm in ms:
         duration.append(end-start)
         aa.append(np.around(np.average(aa[0:6] + aa[9:17]),decimals=1))
         aa.append(np.around(np.average(aa[6:9] + aa[17:21]),decimals=1))
-        df.loc[os.path.join(mm,t+'_oncel')]=aa
+        df.loc[os.path.join(mm,t+'_aug+aug')]=aa
     df.to_csv(csvname)
     print('saved')
 print(df)
