@@ -1,8 +1,9 @@
-import numpy as np
-import pandas as pd
+import tensorflow as tf
+import tensorflow_hub as hub
 import os
-
-dfaa = pd.DataFrame([], columns=[1, 3, 7, 10, 16, 19, 23, 25, 29, 31, 37, 41, 45, 49, 62, 68, 70, 76, 78, 82, 88])
-aa=range(10)
-dfaa.loc[os.path.join(mm, t)] = aa
-df = df.append(dfaa)
+# os.environ["TFHUB_CACHE_DIR"] = '/home/kuki2070s2/PycharmProjects/Aging/hubcache'
+print('downloading')
+os.environ["TFHUB_CACHE_DIR"] = '/home/kuki2070s2/Desktop/TFHUB'
+handle = hub.KerasLayer("https://tfhub.dev/google/imagenet/inception_v3/feature_vector/4",
+                           trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
+print('downloaded')
