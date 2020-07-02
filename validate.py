@@ -6,8 +6,6 @@ import pandas as pd
 import tensorflow_hub as hub
 from time import time
 
-gpu_memory = 8000 # 2080Ti
-# gpu_memory = 6500 # 2070S
 
 # cudnn fail due to memory
 # solution #1
@@ -22,6 +20,10 @@ gpu_memory = 8000 # 2080Ti
 #   except RuntimeError as e:
 #     # Memory growth must be set before GPUs have been initialized
 #     print(e)
+
+
+gpu_memory = 7000 # 2080Ti
+# gpu_memory = 6500 # 2070S
 
 # solution #2
 gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -43,7 +45,8 @@ def read_and_label(file_path):
     img = tf.image.decode_jpeg(img, channels=3)
     img = tf.image.convert_image_dtype(img, tf.float32)
     img = tf.image.resize(img, [100, 100])
-    # img = occlude(img, file_path)
+    img = occlude(img, file_path)
+    img = tf.image.central_crop(img,0.96)
     return img, label
 
 def occlude(image, file_path):
@@ -54,7 +57,7 @@ def occlude(image, file_path):
     mask = tf.image.resize(mask, [100, 100])
     mask = tf.math.greater(mask, 0.25)
     # comment below for cell only
-    # mask = tf.math.logical_not(mask)
+    mask = tf.math.logical_not(mask)
     maskedimg = tf.where(mask, image, tf.ones(tf.shape(image)))
     return maskedimg
 
@@ -96,8 +99,8 @@ testdir = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn
 model_dir = '/home/kuki/Desktop/Synology/aging/data/cnn_models/June16/conclude/'
 
 
-ms = ['IncV3_keras_random']
-ts = ['t'+str(_)+'_12001600_aug10' for _ in range(1,4)]
+ms = ['MobileNetV2_keras_col']
+ts = ['t'+str(_)+'_12001600_aug10_aug+aug' for _ in range(1,4)]
 # ts = ts + ['t'+str(_)+'_300400_aug0_cel' for _ in range(1,4)]
 
 
@@ -148,7 +151,7 @@ for mm in ms:
         duration.append(end-start)
         aa.append(np.around(np.average(aa[0:6] + aa[9:17]),decimals=1))
         aa.append(np.around(np.average(aa[6:9] + aa[17:21]),decimals=1))
-        df.loc[os.path.join(mm,t+'_aug+aug')]=aa
+        df.loc[os.path.join(mm,t+'oncol')]=aa
     df.to_csv(csvname)
     print('saved')
 print(df)

@@ -56,12 +56,17 @@ def read_and_label(file_path):
     img = tf.image.decode_jpeg(img, channels=3)
     img = tf.image.convert_image_dtype(img, tf.float32)
     img = tf.image.resize(img, [IMG_WIDTH, IMG_HEIGHT])
-    # img = occlude(img, file_path)
+    img = occlude(img, file_path)
+    # img = filledge(img)
     return img, label
 
 def get_label(file_path):
     parts = tf.strings.split(file_path, os.path.sep)
     return tf.reshape(tf.where(parts[-4] == CLASS_NAMES), [])
+
+# def filledge(image):
+#     image = tf.pad(image, paddings, mode='CONSTANT', constant_values=0, name=None)
+
 
 def occlude(image, file_path):
     maskpth = tf.strings.regex_replace(file_path, 'image', 'label')
@@ -70,7 +75,7 @@ def occlude(image, file_path):
     mask = tf.image.convert_image_dtype(mask, tf.float16)
     mask = tf.image.resize(mask, [IMG_WIDTH, IMG_HEIGHT])
     mask = tf.math.greater(mask, 0.25)
-    # invert mask
+    # invert mask for collagen only
     mask = tf.math.logical_not(mask)
     maskedimg = tf.where(mask, image, tf.ones(tf.shape(image)))
     return maskedimg

@@ -27,7 +27,7 @@ if gpus:
   try:
     tf.config.experimental.set_virtual_device_configuration(
         gpus[0],
-        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=8500)])
+        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=8000)])
     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
   except RuntimeError as e:
@@ -45,7 +45,7 @@ val_fraction = 30
 max_epochs= 300
 
 augment_degree = 0.10
-samplesize = [2400, 3200] #old, young
+samplesize = [1200, 1600] #old, young
 shuffle_buffer_size = 1000000  # take first 100 from dataset and shuffle and pick one.
 
 def read_and_label(file_path):
@@ -54,7 +54,7 @@ def read_and_label(file_path):
     img = tf.image.decode_jpeg(img, channels=3)
     img = tf.image.convert_image_dtype(img, tf.float32)
     img = tf.image.resize(img, [IMG_WIDTH, IMG_HEIGHT])
-    # img = occlude(img, file_path)
+    img = occlude(img, file_path)
     return img, label
 
 def get_label(file_path):
@@ -69,7 +69,7 @@ def occlude(image, file_path):
     mask = tf.image.resize(mask, [IMG_WIDTH, IMG_HEIGHT])
     mask = tf.math.greater(mask, 0.25)
     # comment below for cell only
-    # mask = tf.math.logical_not(mask)
+    mask = tf.math.logical_not(mask)
     maskedimg = tf.where(mask, image, tf.ones(tf.shape(image)))
     return maskedimg
 
@@ -151,11 +151,12 @@ for idx, elem in enumerate(train_labeled_ds.take(100)):
     plt.imshow(img)
     plt.title(CLASS_NAMES[label].title())
     plt.axis('off')
+target= 'cnn'
+if not os.path.exists(target): os.mkdir(target)
+plt.savefig(target + '/aug'+str(np.around(augment_degree*100,decimals=-1))+'_training data.png')
 plt.show()
 
-target= 'cnn/IncV3_hub'
-if not os.path.exists(target): os.mkdir(target)
-plt.savefig(target + '/aug0_training data.png')
+
 
 train_ds = (train_labeled_ds
             .skip(val_image_count)
@@ -183,10 +184,10 @@ for idx,elem in enumerate(test_labeled_ds.take(100)):
     plt.imshow(img)
     plt.title(CLASS_NAMES[label].title())
     plt.axis('off')
+plt.savefig(target + '/aug'+str(np.around(augment_degree*100,decimals=-1))+'_test_data.png')
 plt.show()
 
 
-plt.savefig(target + '/aug0_test_data.png')
 
 test_ds = (test_labeled_ds
            # .cache("./cache/fibro_test.tfcache")
@@ -207,7 +208,7 @@ print('test step # ', TEST_STEPS)
 def get_callbacks(name):
     return [
         modeling.EpochDots(),
-        tf.keras.callbacks.EarlyStopping(monitor='val_sparse_categorical_crossentropy',
+        tf.keras.callbacks.EarlyStopping(monitor='val_categorical_crossentropy',
                                          patience=50, restore_best_weights=True),
         # tf.keras.callbacks.TensorBoard(log_dir/name, histogram_freq=1),
         # tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_dir + "/{}/cp.ckpt".format(name),
@@ -215,7 +216,7 @@ def get_callbacks(name):
         #                                    monitor='val_sparse_categorical_crossentropy',
         #                                    save_weights_only=True,
         #                                    save_best_only=True),
-        tf.keras.callbacks.ReduceLROnPlateau(monitor='val_sparse_categorical_crossentropy',
+        tf.keras.callbacks.ReduceLROnPlateau(monitor='val_categorical_crossentropy',
                                              factor=0.1, patience=10, verbose=0, mode='auto',
                                              min_delta=0.0001, cooldown=0, min_lr=0),
     ]
@@ -230,8 +231,8 @@ def get_callbacks(name):
 
 def compilefit(model, name, max_epochs, train_ds, val_ds):
     model.compile(optimizer=tf.keras.optimizers.Adam(),
-                  loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-                  metrics=[tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True), 'accuracy'])
+                  loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
+                  metrics=[tf.keras.losses.CategoricalCrossentropy(from_logits=True), 'accuracy'])
     model_history = model.fit(train_ds,
                               steps_per_epoch=STEPS_PER_EPOCH,
                               epochs=max_epochs,
@@ -261,8 +262,8 @@ def plotdf(dfobj, condition, repeat='',lr=None):
     dfobj1 = dfobj.copy()
     dfobj2 = dfobj.copy()
     dfobj.pop('lr')
-    dfobj.pop('sparse_categorical_crossentropy')
-    dfobj.pop('val_sparse_categorical_crossentropy')
+    dfobj.pop('categorical_crossentropy')
+    dfobj.pop('val_categorical_crossentropy')
     pd.DataFrame(dfobj).plot(title=condition+repeat)
     plt.savefig('cnn/' + condition + '/' + repeat + '_accuracy.png')
     dfobj1.pop('lr')
@@ -271,8 +272,8 @@ def plotdf(dfobj, condition, repeat='',lr=None):
     pd.DataFrame(dfobj1).plot(title=condition+repeat)
     plt.savefig('cnn/' + condition + '/' + repeat + '_loss.png')
     if lr is not 'decay':
-        dfobj2.pop('sparse_categorical_crossentropy')
-        dfobj2.pop('val_sparse_categorical_crossentropy')
+        dfobj2.pop('categorical_crossentropy')
+        dfobj2.pop('val_categorical_crossentropy')
         dfobj2.pop('accuracy')
         dfobj2.pop('val_accuracy')
         pd.DataFrame(dfobj2).plot(title=condition+repeat)
@@ -289,19 +290,30 @@ def evaluateit(network,networkname,repeat, train_ds, val_ds, test_ds):
     plotdf(histories[networkname].history,networkname,repeat)
     print('test acc', results[-1] * 100)
 
-trials = ['t'+str(_)+'_24003200_aug10_aug+aug' for _ in range(1,4)]
+trials = ['t'+str(_)+'_12001600_aug10_aug+aug' for _ in range(1,4)]
 # trials = trials + ['t'+str(_) for _ in range(6,11)]
-
+# def ds_resize(image,label):
+#     # image = tf.image.resize(image,[96,96])
+#     image = tf.image.central_crop(image,0.96)
+#     return image,label
+# train_ds_96 = train_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
+# val_ds_96 = val_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
+# test_ds_96 = test_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
 duration=[]
 # for trial in trials:
 #     start = time()
-#     IncV3_hub = tf.keras.Sequential([
-#         hub.KerasLayer("https://tfhub.dev/google/imagenet/inception_v3/feature_vector/4",
-#                        trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
+#     # #min input size 76x76
+#     MobileNetV2_base = tf.keras.applications.MobileNetV2(input_shape=(96, 96, 3),
+#                                                 pooling=None,
+#                                                 include_top=False,
+#                                                 weights='imagenet'
+#                                                 )
+#     MobileNetV2 = tf.keras.Sequential([
+#         MobileNetV2_base,
+#         tf.keras.layers.GlobalAveragePooling2D(),
 #         tf.keras.layers.Dense(2, activation='softmax')
 #     ])
-#     IncV3_hub.build([None, 100, 100, 3])  # Batch input shape.
-#     evaluateit(IncV3_hub,'IncV3_hub',trial,train_ds,val_ds,test_ds)
+#     evaluateit(MobileNetV2,'MobileNetV2_keras_col',trial,train_ds_96,val_ds_96,test_ds_96)
 #     end = time()
 #     duration.append(end-start)
 #     print('duration : ', end-start)
@@ -318,39 +330,25 @@ for trial in trials:
         IncV3_base,
         tf.keras.layers.Dense(2, activation='softmax')
     ])
-    evaluateit(IncV3,'IncV3_keras_imagenet',trial,train_ds,val_ds,test_ds)
+    evaluateit(IncV3,'IncV3_keras_imagenet_col',trial,train_ds,val_ds,test_ds)
     end = time()
     duration.append(end-start)
     print('duration : ', end-start)
-
 for trial in trials:
     start = time()
     # #min input size 76x76
-    IncV3_base = tf.keras.applications.InceptionV3(input_shape=(100, 100, 3),
+    ResNet101V2_base = tf.keras.applications.ResNet101V2(input_shape=(100, 100, 3),
                                                 pooling=None,
                                                 include_top=False,
-                                                weights=None
+                                                weights='imagenet'
                                                 )
-    IncV3 = tf.keras.Sequential([
-        IncV3_base,
+    ResNet101V2 = tf.keras.Sequential([
+        ResNet101V2_base,
         tf.keras.layers.Dense(2, activation='softmax')
     ])
-    evaluateit(IncV3,'IncV3_keras_random',trial,train_ds,val_ds,test_ds)
+    evaluateit(ResNet101V2,'ResNet101V2_keras_imagenet_col',trial,train_ds,val_ds,test_ds)
     end = time()
     duration.append(end-start)
     print('duration : ', end-start)
-# for trial in trials:
-#     start = time()
-#     ResV2_hub = tf.keras.Sequential([
-#         hub.KerasLayer("https://tfhub.dev/google/imagenet/resnet_v2_101/feature_vector/4",
-#                        trainable=True, arguments=dict(batch_norm_momentum=0.99)),  # Can be True, see below.
-#         tf.keras.layers.Dense(2, activation='softmax')
-#     ])
-#     ResV2_hub.build([None, 100, 100, 3])
-#     evaluateit(ResV2_hub,'ResV2_hub',trial,train_ds,val_ds,test_ds)
-#     end = time()
-#     duration.append(end - start)
-#     print('duration : ', end-start)
-
 print('duration : ', duration)
 print('total duration :',np.sum(duration))
