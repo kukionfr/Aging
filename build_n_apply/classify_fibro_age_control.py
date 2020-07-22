@@ -42,7 +42,7 @@ IMG_HEIGHT = 100
 IMG_WIDTH = 100
 BATCH_SIZE = 64
 val_fraction = 15
-max_epochs = 2
+max_epochs = 130
 testbatchsize = 64
 
 augment_degree = 0.10
@@ -315,7 +315,7 @@ def validateit(mm,t):
     df.to_csv(csvname)
     print('saved')
     print(df)
-    print('duration : ', duration)
+    print('validation duration : ', duration)
 
 def evaluateit(network,networkname,repeat, train_ds, val_ds):
     histories[networkname] = compilefit(network, 'cnn/'+networkname+'/'+repeat, max_epochs, train_ds, val_ds)
@@ -359,7 +359,7 @@ for trial in trials:
     evaluateit(MobileNetV2,'MobileNetV2', trial, train_ds, val_ds)
     end = time()
     duration.append(end-start)
-    print('duration : ', end-start)
+    print('train+valid duration : ', end-start)
 
 # for trial in trials:
 #     start = time()
