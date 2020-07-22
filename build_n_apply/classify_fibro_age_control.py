@@ -1,6 +1,6 @@
 import tensorflow as tf
-from tensorflow_docs import modeling
 import tensorflow_hub as hub
+from tensorflow_docs import modeling
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -41,11 +41,12 @@ print("Number of GPU available: ", len(tf.config.experimental.list_physical_devi
 IMG_HEIGHT = 100
 IMG_WIDTH = 100
 BATCH_SIZE = 64
-val_fraction = 30
-max_epochs= 300
+val_fraction = 15
+max_epochs = 2
+testbatchsize = 64
 
 augment_degree = 0.10
-samplesize = [1200, 1600] #old, young
+samplesize = [2400, 3200] #old, young
 shuffle_buffer_size = 1000000  # take first 100 from dataset and shuffle and pick one.
 
 def read_and_label(file_path):
@@ -54,7 +55,7 @@ def read_and_label(file_path):
     img = tf.image.decode_jpeg(img, channels=3)
     img = tf.image.convert_image_dtype(img, tf.float32)
     img = tf.image.resize(img, [IMG_WIDTH, IMG_HEIGHT])
-    img = occlude(img, file_path)
+    # img = occlude(img, file_path)
     return img, label
 
 def get_label(file_path):
@@ -83,13 +84,14 @@ def augment(image, label):
     image = tf.image.random_brightness(image, max_delta=degree)  # tissue thickness, glass transparency (clean)
     image = tf.image.random_flip_left_right(image, seed=5)  # cell orientation
     image = tf.image.random_flip_up_down(image, seed=5)  # cell orientation
+    image = tf.image.random_crop(image, [96,96,3])
     return image, label
 
 def balance(data_dir):
     tmp = [0]
     for CLASS, n in zip(CLASS_NAMES, samplesize):
         secs = [_ for _ in data_dir.glob(CLASS+'/*')]
-        for idx,sec in enumerate(secs):
+        for idx, sec in enumerate(secs):
             sec = os.path.join(sec, 'image/*.jpg')
             list_ds = tf.data.Dataset.list_files(sec)
             # subsample
@@ -108,7 +110,7 @@ def balance(data_dir):
                 labeled_ds_aug = (labeled_ds_org
                                   .shuffle(shuffle_buffer_size)
                                   .take(n-sampleN)
-                                  .map(augment,num_parallel_calls=AUTOTUNE)
+                                  .map(augment, num_parallel_calls=AUTOTUNE)
                                   )
                 labeled_ds = labeled_ds.concatenate(labeled_ds_aug)
                 sampleN = len(list(labeled_ds))
@@ -151,11 +153,10 @@ for idx, elem in enumerate(train_labeled_ds.take(100)):
     plt.imshow(img)
     plt.title(CLASS_NAMES[label].title())
     plt.axis('off')
-target= 'cnn'
+target = 'cnn'
 if not os.path.exists(target): os.mkdir(target)
 plt.savefig(target + '/aug'+str(np.around(augment_degree*100,decimals=-1))+'_training data.png')
 plt.show()
-
 
 
 train_ds = (train_labeled_ds
@@ -172,37 +173,7 @@ val_ds = (train_labeled_ds
           .batch(BATCH_SIZE)
           .prefetch(buffer_size=AUTOTUNE))
 
-test_data_dir = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_dataset/test'])
-test_data_dir = pathlib.Path(test_data_dir)
-test_labeled_ds = balance(test_data_dir)
-
-plt.figure(figsize=(10,10))
-for idx,elem in enumerate(test_labeled_ds.take(100)):
-    img = elem[0]
-    label = elem[1]
-    ax = plt.subplot(10,10,idx+1)
-    plt.imshow(img)
-    plt.title(CLASS_NAMES[label].title())
-    plt.axis('off')
-plt.savefig(target + '/aug'+str(np.around(augment_degree*100,decimals=-1))+'_test_data.png')
-plt.show()
-
-
-
-test_ds = (test_labeled_ds
-           # .cache("./cache/fibro_test.tfcache")
-           .shuffle(buffer_size=shuffle_buffer_size)
-           .repeat()
-           .batch(BATCH_SIZE)
-           .prefetch(buffer_size=AUTOTUNE)  # time it takes to produce next element
-           )
-test_image_count = len(list(test_labeled_ds))
-print('test set size : ', test_image_count)
-TEST_STEPS = test_image_count // BATCH_SIZE
-print('test step # ', TEST_STEPS)
-
-# checkpoint_dir = "training_1"
-# shutil.rmtree(checkpoint_dir, ignore_errors=True)
+testdir = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_dataset/test'])
 
 
 def get_callbacks(name):
@@ -220,14 +191,6 @@ def get_callbacks(name):
                                              factor=0.1, patience=10, verbose=0, mode='auto',
                                              min_delta=0.0001, cooldown=0, min_lr=0),
     ]
-
-
-# lr_schedule = tf.keras.optimizers.schedules.InverseTimeDecay(
-#     1e-4,
-#     decay_steps=STEPS_PER_EPOCH * 100,
-#     decay_rate=1,
-#     staircase=False)
-
 
 def compilefit(model, name, max_epochs, train_ds, val_ds):
     model.compile(optimizer=tf.keras.optimizers.Adam(),
@@ -252,7 +215,6 @@ def compilefit(model, name, max_epochs, train_ds, val_ds):
             model.save(pathlib.Path(name) / 'full_model.h5')
         except:
             print('model not saved?')
-
     return model_history
 
 def plotdf(dfobj, condition, repeat='',lr=None):
@@ -282,73 +244,154 @@ def plotdf(dfobj, condition, repeat='',lr=None):
 
 
 histories = {}
+model_dir = 'cnn'
 
+def load_compile(net):
+    model = tf.keras.models.load_model(os.path.join(*[model_dir,net,'full_model.h5']),
+                                    custom_objects={'KerasLayer': hub.KerasLayer},
+                                    compile=False)
+    model.compile(loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+                  optimizer=tf.keras.optimizers.Adam(),
+                  metrics=['accuracy'])
+    return model
 
-def evaluateit(network,networkname,repeat, train_ds, val_ds, test_ds):
+def evalmodels(path, model,accuracies):
+    datasett, datasettsize = load_dataset(path)
+    print('folder : ', os.path.basename(path), ' dataset size : ',datasettsize)
+    results = model.evaluate(datasett.batch(testbatchsize).prefetch(buffer_size=AUTOTUNE), verbose=0)
+    accuracies.append(np.around(results[-1] * 100, decimals=1))
+    return accuracies
+
+def ds_resize(image,label):
+    # image = tf.image.resize(image,[96,96])
+    image = tf.image.central_crop(image,0.96)
+    return image, label
+
+def load_dataset(dataset_dir):
+    dataset_dir = pathlib.Path(dataset_dir)
+    test_image_count2 = len(list(dataset_dir.glob('image/*.jpg')))
+    list_ds = tf.data.Dataset.list_files(str(dataset_dir / 'image/*.jpg')).shuffle(10000)
+    labeled_ds = list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
+    labeled_ds = labeled_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
+    return labeled_ds, test_image_count2
+
+def validateit(mm,t):
+    duration = []
+    start = time()
+    accuracies = []
+    print(mm, t)
+    m = load_compile(os.path.join(mm, t))
+    print('young train')
+    accuracies = evalmodels(os.path.join(train_data_dir, 'young/sec001'), m,accuracies)
+    accuracies = evalmodels(os.path.join(train_data_dir, 'young/sec003'), m,accuracies)
+    accuracies = evalmodels(os.path.join(train_data_dir, 'young/sec007'), m,accuracies)
+    accuracies = evalmodels(os.path.join(train_data_dir, 'young/sec010'), m,accuracies)
+    accuracies = evalmodels(os.path.join(train_data_dir, 'young/sec016'), m,accuracies)
+    accuracies = evalmodels(os.path.join(train_data_dir, 'young/sec019'), m,accuracies)
+    print('young test')
+    accuracies = evalmodels(os.path.join(testdir, 'young/sec023'), m,accuracies)
+    accuracies = evalmodels(os.path.join(testdir, 'young/sec025'), m,accuracies)
+    accuracies = evalmodels(os.path.join(testdir, 'young/sec029'), m,accuracies)
+    print('old train')
+    accuracies = evalmodels(os.path.join(train_data_dir, 'old/sec031'), m,accuracies)
+    accuracies = evalmodels(os.path.join(train_data_dir, 'old/sec037'), m,accuracies)
+    accuracies = evalmodels(os.path.join(train_data_dir, 'old/sec041'), m,accuracies)
+    accuracies = evalmodels(os.path.join(train_data_dir, 'old/sec045'), m,accuracies)
+    accuracies = evalmodels(os.path.join(train_data_dir, 'old/sec049'), m,accuracies)
+    accuracies = evalmodels(os.path.join(train_data_dir, 'old/sec062'), m,accuracies)
+    accuracies = evalmodels(os.path.join(train_data_dir, 'old/sec068'), m,accuracies)
+    accuracies = evalmodels(os.path.join(train_data_dir, 'old/sec070'), m,accuracies)
+    print('old test')
+    accuracies = evalmodels(os.path.join(testdir, 'old/sec076'), m,accuracies)
+    accuracies = evalmodels(os.path.join(testdir, 'old/sec078'), m,accuracies)
+    accuracies = evalmodels(os.path.join(testdir, 'old/sec082'), m,accuracies)
+    accuracies = evalmodels(os.path.join(testdir, 'old/sec088'), m,accuracies)
+    end = time()
+    print('duration: ', end - start)
+    duration.append(end - start)
+    accuracies.append(np.around(np.average(accuracies[0:6] + accuracies[9:17]), decimals=1))
+    accuracies.append(np.around(np.average(accuracies[6:9] + accuracies[17:21]), decimals=1))
+    df.loc[os.path.join(mm, t)] = accuracies
+    df.to_csv(csvname)
+    print('saved')
+    print(df)
+    print('duration : ', duration)
+
+def evaluateit(network,networkname,repeat, train_ds, val_ds):
     histories[networkname] = compilefit(network, 'cnn/'+networkname+'/'+repeat, max_epochs, train_ds, val_ds)
-    results = network.evaluate(test_ds, steps=TEST_STEPS)
-    plotdf(histories[networkname].history,networkname,repeat)
-    print('test acc', results[-1] * 100)
+    plotdf(histories[networkname].history, networkname, repeat)
+    validateit(networkname, repeat)
 
-trials = ['t'+str(_)+'_12001600_aug10_aug+aug' for _ in range(1,4)]
-# trials = trials + ['t'+str(_) for _ in range(6,11)]
+csvname = 'hub.csv'
+csvname = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_models', csvname])
+
+if os.path.exists(csvname):
+    print('reading :', csvname)
+    df = pd.read_csv(csvname,header=0,index_col=0)
+else:
+    print('empty')
+    df = pd.DataFrame([],columns=[1,3,7,10,16,19,23,25,29,31,37,41,45,49,62,68,70,76,78,82,88,'Train','Test'])
+
+
+trials = ['t'+str(_)+'_24003200_aug10_aug+aug' for _ in range(1,4)]
+
 # def ds_resize(image,label):
 #     # image = tf.image.resize(image,[96,96])
 #     image = tf.image.central_crop(image,0.96)
-#     return image,label
+#     return image, label
 # train_ds_96 = train_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
 # val_ds_96 = val_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
-# test_ds_96 = test_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
+
 duration=[]
+for trial in trials:
+    start = time()
+    # #min input size 76x76
+    MobileNetV2_base = tf.keras.applications.MobileNetV2(input_shape=(96, 96, 3),
+                                                pooling=None,
+                                                include_top=False,
+                                                weights='imagenet'
+                                                )
+    MobileNetV2 = tf.keras.Sequential([
+        MobileNetV2_base,
+        tf.keras.layers.GlobalAveragePooling2D(),
+        tf.keras.layers.Dense(2, activation='softmax')
+    ])
+    evaluateit(MobileNetV2,'MobileNetV2', trial, train_ds, val_ds)
+    end = time()
+    duration.append(end-start)
+    print('duration : ', end-start)
+
 # for trial in trials:
 #     start = time()
 #     # #min input size 76x76
-#     MobileNetV2_base = tf.keras.applications.MobileNetV2(input_shape=(96, 96, 3),
+#     IncV3_base = tf.keras.applications.InceptionV3(input_shape=(96, 96, 3),
 #                                                 pooling=None,
 #                                                 include_top=False,
 #                                                 weights='imagenet'
 #                                                 )
-#     MobileNetV2 = tf.keras.Sequential([
-#         MobileNetV2_base,
-#         tf.keras.layers.GlobalAveragePooling2D(),
+#     IncV3 = tf.keras.Sequential([
+#         IncV3_base,
 #         tf.keras.layers.Dense(2, activation='softmax')
 #     ])
-#     evaluateit(MobileNetV2,'MobileNetV2_keras_col',trial,train_ds_96,val_ds_96,test_ds_96)
+#     evaluateit(IncV3,'IncV3_keras_imagenet_col',trial,train_ds,val_ds,test_ds)
 #     end = time()
 #     duration.append(end-start)
 #     print('duration : ', end-start)
-
-for trial in trials:
-    start = time()
-    # #min input size 76x76
-    IncV3_base = tf.keras.applications.InceptionV3(input_shape=(100, 100, 3),
-                                                pooling=None,
-                                                include_top=False,
-                                                weights='imagenet'
-                                                )
-    IncV3 = tf.keras.Sequential([
-        IncV3_base,
-        tf.keras.layers.Dense(2, activation='softmax')
-    ])
-    evaluateit(IncV3,'IncV3_keras_imagenet_col',trial,train_ds,val_ds,test_ds)
-    end = time()
-    duration.append(end-start)
-    print('duration : ', end-start)
-for trial in trials:
-    start = time()
-    # #min input size 76x76
-    ResNet101V2_base = tf.keras.applications.ResNet101V2(input_shape=(100, 100, 3),
-                                                pooling=None,
-                                                include_top=False,
-                                                weights='imagenet'
-                                                )
-    ResNet101V2 = tf.keras.Sequential([
-        ResNet101V2_base,
-        tf.keras.layers.Dense(2, activation='softmax')
-    ])
-    evaluateit(ResNet101V2,'ResNet101V2_keras_imagenet_col',trial,train_ds,val_ds,test_ds)
-    end = time()
-    duration.append(end-start)
-    print('duration : ', end-start)
+# for trial in trials:
+#     start = time()
+#     # #min input size 76x76
+#     ResNet101V2_base = tf.keras.applications.ResNet101V2(input_shape=(96, 96, 3),
+#                                                 pooling=None,
+#                                                 include_top=False,
+#                                                 weights='imagenet'
+#                                                 )
+#     ResNet101V2 = tf.keras.Sequential([
+#         ResNet101V2_base,
+#         tf.keras.layers.Dense(2, activation='softmax')
+#     ])
+#     evaluateit(ResNet101V2,'ResNet101V2_keras_imagenet_col',trial,train_ds,val_ds,test_ds)
+#     end = time()
+#     duration.append(end-start)
+#     print('duration : ', end-start)
 print('duration : ', duration)
 print('total duration :',np.sum(duration))

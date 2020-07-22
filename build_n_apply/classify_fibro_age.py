@@ -1,13 +1,10 @@
 import tensorflow as tf
-from tensorflow_docs import modeling
-import tensorflow_datasets as tfds
-import tensorflow_hub as hub
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
 import pathlib
-from time import time
+
 # solution #1
 # gpus = tf.config.experimental.list_physical_devices('GPU')
 # if gpus:
