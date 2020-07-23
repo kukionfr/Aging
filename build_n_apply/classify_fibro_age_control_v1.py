@@ -274,7 +274,7 @@ def load_dataset(dataset_dir):
     test_image_count2 = len(list(dataset_dir.glob('image/*.jpg')))
     list_ds = tf.data.Dataset.list_files(str(dataset_dir / 'image/*.jpg')).shuffle(10000)
     labeled_ds = list_ds.map(read_and_label, num_parallel_calls=AUTOTUNE)
-    labeled_ds = labeled_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
+    # labeled_ds = labeled_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
     return labeled_ds, test_image_count2
 
 def validateit(mm,t):

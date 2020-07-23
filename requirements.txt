@@ -1,5 +1,4 @@
 # git+https://github.com/tensorflow/docs
-tensorflow_datasets
 tensorflow_hub
 pandas
 numpy
