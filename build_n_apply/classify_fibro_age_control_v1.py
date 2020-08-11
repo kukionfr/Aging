@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import os
 import pathlib
 from time import time
+
 # solution #1
 # gpus = tf.config.experimental.list_physical_devices('GPU')
 # if gpus:
@@ -19,6 +20,8 @@ from time import time
 #   except RuntimeError as e:
 #     # Memory growth must be set before GPUs have been initialized
 #     print(e)
+
+start = time()
 
 # solution #2
 gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -46,8 +49,8 @@ max_epochs = 150
 testbatchsize = 64
 
 augment_degree = 0.10
-samplesize = [1200, 1600] #old, young
-shuffle_buffer_size = 1000000  # take first 100 from dataset and shuffle and pick one.
+samplesize = [1200, 1600] # old, young
+shuffle_buffer_size = 15000  # take first 100 from dataset and shuffle and pick one.
 
 def read_and_label(file_path):
     label = get_label(file_path)
@@ -87,6 +90,7 @@ def augment(image, label):
     # image = tf.image.random_crop(image, [96,96,3])
     return image, label
 
+
 def balance(data_dir):
     tmp = [0]
     for CLASS, n in zip(CLASS_NAMES, samplesize):
@@ -114,14 +118,14 @@ def balance(data_dir):
                                   )
                 labeled_ds = labeled_ds.concatenate(labeled_ds_aug)
                 sampleN = len(list(labeled_ds))
-            print('list_ds: ', len(list(labeled_ds)),CLASS)
+            # print('list_ds: ', len(list(labeled_ds)),CLASS)
             # append
             if tmp[0] == 0:
                 tmp[idx] = labeled_ds
             else:
                 labeled_ds = tmp[0].concatenate(labeled_ds)
                 tmp[0] = labeled_ds
-        print(CLASS, ': sample size =', len(list(tmp[0])))
+        # print(CLASS, ': sample size =', len(list(tmp[0])))
     return tmp[0].shuffle(shuffle_buffer_size)
 
 # list location of all training images
@@ -133,8 +137,6 @@ CLASS_NAMES = np.array([item.name for item in train_data_dir.glob('*') if item.n
 CLASS_NAMES = sorted(CLASS_NAMES, key=str.lower) #sort alphabetically case-insensitive
 
 
-
-
 train_labeled_ds = balance(train_data_dir)
 train_image_count = len(list(train_labeled_ds))
 print('training set size : ', train_image_count)
@@ -142,8 +144,10 @@ val_image_count = train_image_count // 100 * val_fraction
 print('validation size: ', val_image_count)
 train_image_count2 = train_image_count-val_image_count
 print('training set size after split : ', train_image_count2)
+
 STEPS_PER_EPOCH = train_image_count2 // BATCH_SIZE
 VALIDATION_STEPS = val_image_count // BATCH_SIZE
+
 print('train step #',STEPS_PER_EPOCH)
 print('validation step #',VALIDATION_STEPS)
 
@@ -168,6 +172,7 @@ train_ds = (train_labeled_ds
             .batch(BATCH_SIZE)
             .prefetch(buffer_size=AUTOTUNE)
             )
+
 
 val_ds = (train_labeled_ds
           .take(val_image_count)
@@ -219,6 +224,7 @@ def compilefit(model, name, max_epochs, train_ds, val_ds):
             print('model not saved?')
     return model_history
 
+
 def plotdf(dfobj, condition, repeat='',lr=None):
     # pd.DataFrame(dfobj).plot(title=condition+repeat)
     dfobj.pop('loss')
@@ -248,6 +254,7 @@ def plotdf(dfobj, condition, repeat='',lr=None):
 histories = {}
 model_dir = 'cnn'
 
+
 def load_compile(net):
     model = tf.keras.models.load_model(os.path.join(*[model_dir,net,'full_model.h5']),
                                     custom_objects={'KerasLayer': hub.KerasLayer},
@@ -264,10 +271,10 @@ def evalmodels(path, model,accuracies):
     accuracies.append(np.around(results[-1] * 100, decimals=1))
     return accuracies
 
-def ds_resize(image,label):
-    # image = tf.image.resize(image,[96,96])
-    image = tf.image.central_crop(image,0.96)
-    return image, label
+# def ds_resize(image,label):
+#     # image = tf.image.resize(image,[96,96])
+#     image = tf.image.central_crop(image,0.96)
+#     return image, label
 
 def load_dataset(dataset_dir):
     dataset_dir = pathlib.Path(dataset_dir)
@@ -319,10 +326,12 @@ def validateit(mm,t):
     print(df)
     print('validation duration : ', duration)
 
+
 def evaluateit(network,networkname,repeat, train_ds, val_ds):
     histories[networkname] = compilefit(network, 'cnn/'+networkname+'/'+repeat, max_epochs, train_ds, val_ds)
     plotdf(histories[networkname].history, networkname, repeat)
     validateit(networkname, repeat)
+
 
 csvname = 'hub.csv'
 # csvname = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_models', csvname])
@@ -337,7 +346,7 @@ else:
     df = pd.DataFrame([],columns=[1,3,7,10,16,19,23,25,29,31,37,41,45,49,62,68,70,76,78,82,88,'Train','Test'])
 
 
-trials = ['t'+str(_)+'_24003200_aug10_cell' for _ in range(1,4)]
+trials = ['t'+str(_)+'_24003200_aug10_cell' for _ in range(1,2)]
 
 # def ds_resize(image,label):
 #     # image = tf.image.resize(image,[96,96])
@@ -347,40 +356,43 @@ trials = ['t'+str(_)+'_24003200_aug10_cell' for _ in range(1,4)]
 # val_ds_96 = val_ds.map(ds_resize, num_parallel_calls=AUTOTUNE)
 
 duration=[]
-for trial in trials:
-    start = time()
-    # #min input size 76x76
-    MobileNetV2_base = tf.keras.applications.MobileNetV2(input_shape=(96, 96, 3),
-                                                pooling=None,
-                                                include_top=False,
-                                                weights='imagenet'
-                                                )
-    MobileNetV2 = tf.keras.Sequential([
-        MobileNetV2_base,
-        tf.keras.layers.GlobalAveragePooling2D(),
-        tf.keras.layers.Dense(2, activation='softmax')
-    ])
-    evaluateit(MobileNetV2,'MobileNetV2', trial, train_ds, val_ds)
-    end = time()
-    duration.append(end-start)
-    print('train+valid duration : ', end-start)
-
 # for trial in trials:
 #     start = time()
 #     # #min input size 76x76
-#     IncV3_base = tf.keras.applications.InceptionV3(input_shape=(96, 96, 3),
+#     MobileNetV2_base = tf.keras.applications.MobileNetV2(input_shape=(96, 96, 3),
 #                                                 pooling=None,
 #                                                 include_top=False,
 #                                                 weights='imagenet'
 #                                                 )
-#     IncV3 = tf.keras.Sequential([
-#         IncV3_base,
+#     MobileNetV2 = tf.keras.Sequential([
+#         MobileNetV2_base,
+#         tf.keras.layers.GlobalAveragePooling2D(),
 #         tf.keras.layers.Dense(2, activation='softmax')
 #     ])
-#     evaluateit(IncV3,'IncV3_keras_imagenet_col',trial,train_ds,val_ds,test_ds)
+#     evaluateit(MobileNetV2,'MobileNetV2', trial, train_ds, val_ds)
 #     end = time()
 #     duration.append(end-start)
-#     print('duration : ', end-start)
+#     print('train+valid duration : ', end-start)
+end = time()
+
+print('preprocessing time: ', np.around(end-start,decimals=1))
+for trial in trials:
+    start = time()
+    # #min input size 76x76
+    IncV3_base = tf.keras.applications.InceptionV3(input_shape=(100, 100, 3),
+                                                pooling=None,
+                                                include_top=False,
+                                                weights='imagenet'
+                                                )
+    IncV3 = tf.keras.Sequential([
+        IncV3_base,
+        tf.keras.layers.Dense(2, activation='softmax')
+    ])
+    evaluateit(IncV3,'IncV3',trial,train_ds,val_ds)
+    end = time()
+    duration.append(end-start)
+    print('duration : ', end-start)
+
 # for trial in trials:
 #     start = time()
 #     # #min input size 76x76

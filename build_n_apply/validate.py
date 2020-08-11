@@ -90,23 +90,26 @@ def load_dataset(dataset_dir):
 
 
 AUTOTUNE = tf.data.experimental.AUTOTUNE
-train_data_dir = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_dataset/train'])
+# train_data_dir = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_dataset/train'])
+train_data_dir = r'\\kukissd\research\aging\data\cnn_dataset\fold1of3\train'
 train_data_dir = pathlib.Path(train_data_dir)
 CLASS_NAMES = np.array([item.name for item in train_data_dir.glob('*') if item.name != ".DS_store"])
-testdir = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_dataset/test'])
-
+# testdir = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_dataset/test'])
+testdir = r'\\kukissd\research\aging\data\cnn_dataset\fold1of3\test'
 # model_dir = 'cnn'
-model_dir = '/home/kuki/Desktop/Synology/aging/data/cnn_models/June16/conclude/'
+model_dir = r'\\kukissd\research\aging\data\cnn_models\June16\conclude'
 
 
-ms = ['MobileNetV2_keras_col']
+ms = ['MobileNetV2_global_keras_imagenet']
 ts = ['t'+str(_)+'_12001600_aug10_aug+aug' for _ in range(1,4)]
 # ts = ts + ['t'+str(_)+'_300400_aug0_cel' for _ in range(1,4)]
 
 
 
 csvname = 'hub.csv'
-csvname = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_models', csvname])
+# csvname = os.path.join(*[os.environ['HOME'], 'Desktop', 'Synology/aging/data/cnn_models', csvname])
+csvname = os.path.join(r'\\kukissd\research\aging\data\cnn_models', csvname)
+
 
 if os.path.exists(csvname):
     print('reading :', csvname)
@@ -151,7 +154,7 @@ for mm in ms:
         duration.append(end-start)
         aa.append(np.around(np.average(aa[0:6] + aa[9:17]),decimals=1))
         aa.append(np.around(np.average(aa[6:9] + aa[17:21]),decimals=1))
-        df.loc[os.path.join(mm,t+'oncol')]=aa
+        df.loc[os.path.join(mm,t+'on_col')]=aa
     df.to_csv(csvname)
     print('saved')
 print(df)
