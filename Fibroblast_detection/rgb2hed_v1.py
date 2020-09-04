@@ -1,6 +1,6 @@
 import numpy as np
 from scipy import linalg
-import dtype
+from skimage.util import dtype
 
 def rgb2hed(rgb):
     return separate_stains(rgb, hed_from_rgb)

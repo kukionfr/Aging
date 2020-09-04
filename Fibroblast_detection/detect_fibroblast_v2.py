@@ -16,16 +16,18 @@ from PIL import Image
 import pandas as pd
 from copy import deepcopy
 
-svs_src = r'\\kukissd\Kyu_Sync\Aging\data\svs\temp'
+svs_src = r'\\kukissd\Kyu_Sync\Aging\data\svs'
 fns = [os.path.splitext(_)[0] for _ in os.listdir(svs_src) if _.lower().endswith('svs')]
-dst = os.path.join(svs_src,'fb_morp_param')
+dst = os.path.join(svs_src,'20x\segmentation')
 if not os.path.exists(dst): os.mkdir(dst)
 
-fns = ['Wirtz.Denis_OTS-19_5021-006','5619_Wirtz.Denis_OTS-19_5619-010','5619_Wirtz.Denis_OTS-19_5619-033']
+fns = ['Wirtz.Denis_OTS-19_5021-003']
 for fn in fns:
     rois = []
-    rois = xml2mask(svs_src,fn,dst)
-    for regionidx,region in enumerate(rois):
+    rois,region_orgs = xml2mask(svs_src,fn,dst)
+    for regionidx,(region,region_org) in enumerate(zip(rois,region_orgs)):
+        dst2 = os.path.join(dst, fn + '_tile_{:d}'.format(regionidx))
+        if os.path.exists(dst2): continue
         # RGB to Haematoxylin-Eosin-DAB (HED) color space conversion.
         # Hematoxylin + Eosin + DAB
         start=time()
@@ -43,6 +45,7 @@ for fn in fns:
         Hematoxylin = cv2.normalize(Hema, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
 
         plt.figure(figsize=(12, 12))
+        plt.title(fn+'_'+str(regionidx))
         plt.hist(Hematoxylin.ravel(), 255, [0, 255])
         plt.xticks(range(0,256,5))
         plt.xlim([5,80])
@@ -63,10 +66,10 @@ for fn in fns:
         bw = (labeled_bw > 1) * 255
         plt.figure(figsize=(12,12))
         plt.imshow(bw[0:6000,0:6000],cmap='gray')
-        plt.title(fn+str(regionidx))
+        plt.title(fn+'_'+str(regionidx))
         plt.figure(figsize=(12, 12))
         plt.imshow(region[0:6000, 0:6000])
-        plt.title(fn+str(regionidx))
+        plt.title(fn+'_'+str(regionidx))
         plt.show()
         ########
         threshold = input("Enter threshold (0-255):")
@@ -84,17 +87,17 @@ for fn in fns:
         bw = (labeled_bw > 1) * 255
         plt.figure(figsize=(12, 12))
         plt.imshow(bw[0:6000, 0:6000], cmap='gray')
-        plt.title(fn + str(regionidx))
+        plt.title(fn +'_'+ str(regionidx))
         plt.figure(figsize=(12, 12))
         plt.imshow(region[0:6000, 0:6000])
-        plt.title(fn + str(regionidx))
+        plt.title(fn +'_'+ str(regionidx))
         plt.show()
         ########
         bw_img = Image.fromarray(bw).convert('1')
         bw_img.save(os.path.join(dst, fn + '_SZ_filtered_{:d}.tif'.format(regionidx)))
         #3 AR filter
-        minAR = 2.5
-        maxAR = 7.5
+        minAR = 2
+        maxAR = 8
         start=time()
         props = regionprops(labeled_bw)
 
@@ -103,7 +106,7 @@ for fn in fns:
             else: AR = 0
             if AR<minAR: labeled_bw[labeled_bw==x.label]=0
             if AR>maxAR: labeled_bw[labeled_bw==x.label]=0
-        Parallel(n_jobs=-4, prefer="threads")(delayed(ARfilter)(x) for x in props)
+        Parallel(n_jobs=-2, prefer="threads")(delayed(ARfilter)(x) for x in props)
         # for idx,prop in enumerate(props):
         #     if idx%300==0: print('AR',idx)
         #     if (prop['minor_axis_length']!=0): AR = prop['major_axis_length']/prop['minor_axis_length']
@@ -113,9 +116,9 @@ for fn in fns:
         print("number of nucleus as of now:", len(np.unique(labeled_bw)))
         print("AR filter {:.2f} sec elapsed".format(time()-start))
         #3 save bw before distance filter
-        bw = (labeled_bw > 0) * 255
-        bw_img = Image.fromarray(bw).convert('1')
-        bw_img.save(os.path.join(dst, fn + '_AR_filtered_{:d}.tif'.format(regionidx)))
+        # bw = (labeled_bw > 0) * 255
+        # bw_img = Image.fromarray(bw).convert('1')
+        # bw_img.save(os.path.join(dst, fn + '_AR_filtered_{:d}.tif'.format(regionidx)))
 
         #4 distance filter
         def dist_filter(labeled_bw,min_dist_to_neighbor=100):
@@ -132,9 +135,9 @@ for fn in fns:
             return labeled_bw
         labeled_bw = dist_filter(labeled_bw,min_dist_to_neighbor=100)
         #5 save bw before distance filter
-        bw = (labeled_bw > 0) * 255
-        bw_img = Image.fromarray(bw).convert('1')
-        bw_img.save(os.path.join(dst,fn+'_Dist_filtered_{:d}.tif'.format(regionidx)))
+        # bw = (labeled_bw > 0) * 255
+        # bw_img = Image.fromarray(bw).convert('1')
+        # bw_img.save(os.path.join(dst,fn+'_Dist_filtered_{:d}.tif'.format(regionidx)))
 
         #5 SF filter (keep cells in the range)
         def SF_filter(x):
@@ -145,7 +148,7 @@ for fn in fns:
         maxSF = 0.7
         start = time()
         props = regionprops(labeled_bw)
-        Parallel(n_jobs=-4, prefer="threads")(delayed(SF_filter)(x) for x in props)
+        Parallel(n_jobs=-2, prefer="threads")(delayed(SF_filter)(x) for x in props)
         print("number of nucleus as of now:", len(np.unique(labeled_bw)))
         print("SF filter {:.2f} sec elapsed".format(time() - start))
         #4 save bw before distance filter
@@ -162,4 +165,17 @@ for fn in fns:
         SFs = [np.around(4*np.pi*_['area']/_['perimeter']**2,decimals=3) for _ in prop]
         dict = {'x':xs,'y':ys,'area':area,'aspect_ratio':ARs,'circularity':SFs}
         df = pd.DataFrame(dict)
-        df.to_csv(os.path.join(dst,fn+'_parameters_{:d}.csv'.format(regionidx)))
+        df.to_csv(os.path.join(dst,fn+'_parameters_{:d}.csv'.format(regionidx)),index=False)
+
+        #7 export tiles
+
+        if not os.path.exists(dst2):os.mkdir(dst2)
+        if not os.path.exists(os.path.join(dst2,'image')):os.mkdir(os.path.join(dst2,'image'))
+        if not os.path.exists(os.path.join(dst2,'mask')):os.mkdir(os.path.join(dst2,'mask'))
+
+        for idx, (x, y) in enumerate(zip(xs, ys)):
+            (left, upper, right, lower) = (x - 50, y - 50, x + 50, y + 50)
+            im_crop = region_org.crop((left, upper, right, lower))
+            bw_crop = bw_img.crop((left, upper, right, lower))
+            im_crop.save(os.path.join(*[dst2,'image','tile_{:d}.png'.format(idx)]))
+            bw_crop.save(os.path.join(*[dst2,'mask','tile_{:d}.png'.format(idx)]))

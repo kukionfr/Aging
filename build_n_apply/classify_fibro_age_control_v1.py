@@ -375,7 +375,7 @@ duration=[]
 #     print('train+valid duration : ', end-start)
 end = time()
 
-print('preprocessing time: ', np.around(end-start,decimals=1))
+print('temp_immune time: ', np.around(end-start,decimals=1))
 for trial in trials:
     start = time()
     # #min input size 76x76

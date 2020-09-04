@@ -51,14 +51,17 @@ def xml2mask(svs_src,fn,dst):
     # iterate each collagen (which is supposedly entire reticular dermis of a section)
     xml_col = xml[xml['classID']==np.unique(xml['classID'])[sort_index][0]]
     region_arrs=[]
+    region_arrs_org=[]
     for objidx, objid in enumerate(np.unique(xml_col['objID'])):
         if os.path.exists(os.path.join(dst,fn+'_tissue_roi_{:d}.tif'.format(objidx))):
             print('Saved ROI tiff file already exists. This file will be loaded')
             region_arr = Image.open(os.path.join(dst,fn+'_tissue_roi_{:d}.tif'.format(objidx)))
             region_arr = np.array(region_arr)
             region_arrs.append(region_arr)
-            continue
 
+            region_arr_org = Image.open(os.path.join(dst,fn+'_tissue_region_{:d}.tif'.format(objidx)))
+            region_arrs_org.append(region_arr_org)
+            continue
         object = xml_col[xml_col['objID']==objid]
         x = object['x']
         y = object['y']
@@ -66,6 +69,7 @@ def xml2mask(svs_src,fn,dst):
         [width,height] = [xmax-xmin,ymax-ymin]
         start=time()
         region = svs.read_region(location=(xmin,ymin),level=0,size=(width,height)).convert("RGB")
+        region_arrs_org.append(region)
         region.save(os.path.join(dst,fn+'_tissue_region_{:d}.tif'.format(objidx)))
         print("openslide: {:.2f} sec elapsed".format(time()-start))
 
@@ -88,5 +92,5 @@ def xml2mask(svs_src,fn,dst):
         region_arr_img.save(os.path.join(dst,fn+'_tissue_roi_{:d}.tif'.format(objidx)))
         print("removing non-collagen region: {:.2f} sec elapsed".format(time()-start))
     print("xml2mask: {:.2f} sec elapsed \n".format(time() - defstart))
-    return region_arrs
+    return region_arrs,region_arrs_org
 
